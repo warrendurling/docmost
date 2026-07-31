@@ -200,6 +200,47 @@ export interface Billing {
   workspaceId: string;
 }
 
+export interface CollectionProperties {
+  collectionPageId: string;
+  createdAt: Generated<Timestamp>;
+  deletedAt: Timestamp | null;
+  id: string;
+  isPrimary: Generated<boolean>;
+  name: string;
+  position: string;
+  type: string;
+  typeOptions: Json | null;
+  updatedAt: Generated<Timestamp>;
+  workspaceId: string;
+}
+
+export interface CollectionRows {
+  cells: Generated<Json>;
+  collectionPageId: string;
+  createdAt: Generated<Timestamp>;
+  creatorId: string | null;
+  deletedAt: Timestamp | null;
+  id: Generated<string>;
+  lastUpdatedById: string | null;
+  pageId: string;
+  position: string;
+  updatedAt: Generated<Timestamp>;
+  workspaceId: string;
+}
+
+export interface CollectionViews {
+  collectionPageId: string;
+  config: Generated<Json>;
+  createdAt: Generated<Timestamp>;
+  creatorId: string | null;
+  id: Generated<string>;
+  name: string;
+  position: string;
+  type: Generated<string>;
+  updatedAt: Generated<Timestamp>;
+  workspaceId: string;
+}
+
 export interface Comments {
   content: Json | null;
   createdAt: Generated<Timestamp>;
@@ -321,6 +362,9 @@ export interface Pages {
   id: Generated<string>;
   isBase: Generated<boolean>;
   baseSchemaVersion: Generated<number>;
+  isCollection: Generated<boolean>;
+  isCollectionRow: Generated<boolean>;
+  isInlineCollection: Generated<boolean>;
   isLocked: Generated<boolean>;
   lastUpdatedById: string | null;
   parentPageId: string | null;
@@ -649,6 +693,9 @@ export interface DB {
   baseRows: BaseRows;
   baseViews: BaseViews;
   billing: Billing;
+  collectionProperties: CollectionProperties;
+  collectionRows: CollectionRows;
+  collectionViews: CollectionViews;
   comments: Comments;
   favorites: Favorites;
   fileTasks: FileTasks;

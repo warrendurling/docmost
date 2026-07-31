@@ -6,6 +6,9 @@ import {
   BaseProperties,
   BaseRows,
   BaseViews,
+  CollectionProperties,
+  CollectionRows,
+  CollectionViews,
   Comments,
   Groups,
   Labels,
@@ -256,3 +259,20 @@ export type UpdatableBaseRow = Updateable<Omit<BaseRows, 'id'>>;
 export type BaseView = Selectable<BaseViews>;
 export type InsertableBaseView = Insertable<BaseViews>;
 export type UpdatableBaseView = Updateable<Omit<BaseViews, 'id'>>;
+
+// Collection Property
+export type CollectionProperty = Selectable<CollectionProperties>;
+export type InsertableCollectionProperty = Insertable<CollectionProperties>;
+export type UpdatableCollectionProperty = Updateable<
+  Omit<CollectionProperties, 'id' | 'collectionPageId'>
+>;
+
+// Collection Row
+export type CollectionRow = Selectable<CollectionRows>;
+export type InsertableCollectionRow = Insertable<CollectionRows>;
+export type UpdatableCollectionRow = Updateable<Omit<CollectionRows, 'id'>>;
+
+// Collection View
+export type CollectionView = Selectable<CollectionViews>;
+export type InsertableCollectionView = Insertable<CollectionViews>;
+export type UpdatableCollectionView = Updateable<Omit<CollectionViews, 'id'>>;
