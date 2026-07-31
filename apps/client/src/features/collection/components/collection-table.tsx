@@ -6,16 +6,14 @@ import {
   useReactTable,
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Loader, Text, Checkbox, Badge } from "@mantine/core";
+import { Loader, Text } from "@mantine/core";
 import {
   useCollectionInfoQuery,
   useRowsListQuery,
 } from "@/features/collection/queries/collection-query";
-import {
-  ICollectionProperty,
-  ICollectionRow,
-} from "@/features/collection/services/collection-service";
+import { ICollectionRow } from "@/features/collection/services/collection-service";
 import { buildColumns } from "@/features/collection/components/build-columns";
+import { EditableCell } from "@/features/collection/components/cell-editors/editable-cell";
 
 interface CollectionTableProps {
   collectionPageId: string;
@@ -24,33 +22,6 @@ interface CollectionTableProps {
 
 const ROW_HEIGHT = 36;
 const TABLE_MAX_HEIGHT = "calc(100vh - 220px)";
-
-function renderCell(row: ICollectionRow, property: ICollectionProperty) {
-  if (property.type === "title") {
-    return row.title;
-  }
-
-  const value = row.cells?.[property.id];
-
-  switch (property.type) {
-    case "text":
-      return typeof value === "string" ? value : "";
-    case "number":
-      return value === null || value === undefined ? "" : String(value);
-    case "select": {
-      const choices = property.typeOptions?.choices ?? [];
-      const choice = choices.find((c: any) => c.id === value);
-      if (!choice) return "";
-      return <Badge color={choice.color}>{choice.name}</Badge>;
-    }
-    case "date":
-      return value ? new Date(value).toLocaleDateString() : "";
-    case "checkbox":
-      return <Checkbox checked={!!value} disabled readOnly />;
-    default:
-      return "";
-  }
-}
 
 export function CollectionTable({
   collectionPageId,
@@ -77,16 +48,21 @@ export function CollectionTable({
         id: col.id,
         header: col.name,
         accessorFn: (row) => row.cells?.[col.propertyId],
-        cell: ({ row }) =>
-          renderCell(row.original, {
-            id: col.propertyId,
-            name: col.name,
-            type: col.type,
-            typeOptions: col.typeOptions,
-            position: "",
-          }),
+        cell: ({ row }) => (
+          <EditableCell
+            row={row.original}
+            property={{
+              id: col.propertyId,
+              name: col.name,
+              type: col.type,
+              typeOptions: col.typeOptions,
+              position: "",
+            }}
+            collectionPageId={collectionPageId}
+          />
+        ),
       })),
-    [builtColumns],
+    [builtColumns, collectionPageId],
   );
 
   const table = useReactTable({

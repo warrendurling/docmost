@@ -9,11 +9,13 @@ import { CollectionTable } from "@/features/collection/components/collection-tab
 import {
   useCollectionInfoQuery,
   useRowsListQuery,
+  useUpdateRowMutation,
 } from "@/features/collection/queries/collection-query";
 import {
   ICollectionInfo,
   ICollectionRow,
 } from "@/features/collection/services/collection-service";
+import { useUpdatePageMutation } from "@/features/page/queries/page-query";
 
 // jsdom has no matchMedia; MantineProvider's color-scheme effect needs it.
 window.matchMedia =
@@ -32,6 +34,11 @@ window.matchMedia =
 vi.mock("@/features/collection/queries/collection-query", () => ({
   useCollectionInfoQuery: vi.fn(),
   useRowsListQuery: vi.fn(),
+  useUpdateRowMutation: vi.fn(),
+}));
+
+vi.mock("@/features/page/queries/page-query", () => ({
+  useUpdatePageMutation: vi.fn(),
 }));
 
 // jsdom never lays out elements, so the real virtualizer computes an
@@ -108,6 +115,12 @@ describe("CollectionTable", () => {
     vi.mocked(useRowsListQuery).mockReturnValue({
       data: { rows },
       isLoading: false,
+    } as any);
+    vi.mocked(useUpdateRowMutation).mockReturnValue({
+      mutate: vi.fn(),
+    } as any);
+    vi.mocked(useUpdatePageMutation).mockReturnValue({
+      mutate: vi.fn(),
     } as any);
 
     render(
