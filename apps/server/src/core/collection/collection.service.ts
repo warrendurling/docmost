@@ -14,8 +14,10 @@ import { ShareRepo } from '@docmost/db/repos/share/share.repo';
 import { CollectionRepo } from '@docmost/db/repos/collection/collection.repo';
 import { CollectionPropertyRepo } from '@docmost/db/repos/collection/collection-property.repo';
 import { CollectionViewRepo } from '@docmost/db/repos/collection/collection-view.repo';
+import { CollectionRowRepo } from '@docmost/db/repos/collection/collection-row.repo';
 import {
   CollectionProperty,
+  CollectionRow,
   CollectionView,
   Page,
   User,
@@ -47,6 +49,7 @@ export class CollectionService {
     private readonly collectionRepo: CollectionRepo,
     private readonly collectionPropertyRepo: CollectionPropertyRepo,
     private readonly collectionViewRepo: CollectionViewRepo,
+    private readonly collectionRowRepo: CollectionRowRepo,
     private readonly pageAccessService: PageAccessService,
     private readonly spaceAbility: SpaceAbilityFactory,
   ) {}
@@ -303,6 +306,108 @@ export class CollectionService {
     }
 
     await this.collectionPropertyRepo.softDelete(opts.collectionPageId, opts.id);
+
+    return { success: true };
+  }
+
+  async createRow(opts: {
+    user: User;
+    collectionPageId: string;
+  }): Promise<CollectionRow> {
+    const databasePage = await this.pageRepo.findById(opts.collectionPageId);
+    if (!databasePage || databasePage.deletedAt) {
+      throw new NotFoundException('Page not found');
+    }
+    await this.pageAccessService.validateCanEdit(databasePage, opts.user);
+
+    return executeTx(this.db, async (trx) => {
+      const rowPage = await this.pageService.create(
+        opts.user.id,
+        databasePage.workspaceId,
+        {
+          spaceId: databasePage.spaceId,
+          parentPageId: opts.collectionPageId,
+        } as CreatePageDto,
+        trx,
+      );
+
+      await this.collectionRepo.setCollectionFlags(
+        rowPage.id,
+        { isCollectionRow: true },
+        trx,
+      );
+
+      const existingRows = await this.collectionRowRepo.findByCollectionPageId(
+        opts.collectionPageId,
+        trx,
+      );
+      const lastPosition = existingRows.length
+        ? existingRows[existingRows.length - 1].position
+        : null;
+
+      return this.collectionRowRepo.insert(
+        {
+          collectionPageId: opts.collectionPageId,
+          pageId: rowPage.id,
+          cells: {},
+          position: generateJitteredKeyBetween(lastPosition, null),
+          workspaceId: databasePage.workspaceId,
+          creatorId: opts.user.id,
+        },
+        trx,
+      );
+    });
+  }
+
+  async updateRow(opts: {
+    user: User;
+    rowId: string;
+    cells: Record<string, unknown>;
+  }): Promise<CollectionRow> {
+    const row = await this.collectionRowRepo.findById(opts.rowId);
+    if (!row || row.deletedAt) {
+      throw new NotFoundException('Row not found');
+    }
+
+    const databasePage = await this.pageRepo.findById(row.collectionPageId);
+    if (!databasePage || databasePage.deletedAt) {
+      throw new NotFoundException('Page not found');
+    }
+    await this.pageAccessService.validateCanEdit(databasePage, opts.user);
+
+    return this.collectionRowRepo.patchCells(
+      opts.rowId,
+      opts.cells,
+      opts.user.id,
+    );
+  }
+
+  async deleteRow(opts: {
+    user: User;
+    rowId: string;
+  }): Promise<{ success: true }> {
+    const row = await this.collectionRowRepo.findById(opts.rowId);
+    if (!row || row.deletedAt) {
+      throw new NotFoundException('Row not found');
+    }
+
+    const databasePage = await this.pageRepo.findById(row.collectionPageId);
+    if (!databasePage || databasePage.deletedAt) {
+      throw new NotFoundException('Page not found');
+    }
+    await this.pageAccessService.validateCanEdit(databasePage, opts.user);
+
+    // ponytail: PageRepo.removePage manages its own internal transaction
+    // (no trx param on its signature) — matches the existing idiom in
+    // delete() above, which also calls it un-wrapped. True single-tx
+    // atomicity with the row soft-delete below would need a signature
+    // change to removePage, out of scope here.
+    await this.pageRepo.removePage(
+      row.pageId,
+      opts.user.id,
+      databasePage.workspaceId,
+    );
+    await this.collectionRowRepo.softDelete(opts.rowId);
 
     return { success: true };
   }

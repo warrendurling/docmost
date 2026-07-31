@@ -6,6 +6,9 @@ import {
   CreateCollectionPropertyDto,
   UpdateCollectionPropertyDto,
   DeleteCollectionPropertyDto,
+  CreateCollectionRowDto,
+  UpdateCollectionRowDto,
+  DeleteCollectionRowDto,
 } from './dto/collection.input';
 import { AuthUser } from '../../common/decorators/auth-user.decorator';
 import { AuthWorkspace } from '../../common/decorators/auth-workspace.decorator';
@@ -92,5 +95,30 @@ export class CollectionController {
       collectionPageId: dto.collectionPageId,
       id: dto.id,
     });
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('rows/create')
+  createRow(@Body() dto: CreateCollectionRowDto, @AuthUser() user: User) {
+    return this.collectionService.createRow({
+      user,
+      collectionPageId: dto.collectionPageId,
+    });
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('rows/update')
+  updateRow(@Body() dto: UpdateCollectionRowDto, @AuthUser() user: User) {
+    return this.collectionService.updateRow({
+      user,
+      rowId: dto.rowId,
+      cells: dto.cells,
+    });
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('rows/delete')
+  deleteRow(@Body() dto: DeleteCollectionRowDto, @AuthUser() user: User) {
+    return this.collectionService.deleteRow({ user, rowId: dto.rowId });
   }
 }

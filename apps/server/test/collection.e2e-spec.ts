@@ -24,6 +24,7 @@ import { ThrottleModule } from '../src/integrations/throttle/throttle.module';
 import { CollectionService } from '../src/core/collection/collection.service';
 import { CollectionPropertyRepo } from '@docmost/db/repos/collection/collection-property.repo';
 import { CollectionViewRepo } from '@docmost/db/repos/collection/collection-view.repo';
+import { CollectionRowRepo } from '@docmost/db/repos/collection/collection-row.repo';
 import { PageRepo } from '@docmost/db/repos/page/page.repo';
 import { ShareRepo } from '@docmost/db/repos/share/share.repo';
 import { KyselyDB } from '@docmost/db/types/kysely.types';
@@ -71,6 +72,7 @@ describe('CollectionService (e2e)', () => {
   let collectionService: CollectionService;
   let collectionPropertyRepo: CollectionPropertyRepo;
   let collectionViewRepo: CollectionViewRepo;
+  let collectionRowRepo: CollectionRowRepo;
   let pageRepo: PageRepo;
   let shareRepo: ShareRepo;
   let db: KyselyDB;
@@ -90,6 +92,7 @@ describe('CollectionService (e2e)', () => {
     collectionService = moduleFixture.get(CollectionService);
     collectionPropertyRepo = moduleFixture.get(CollectionPropertyRepo);
     collectionViewRepo = moduleFixture.get(CollectionViewRepo);
+    collectionRowRepo = moduleFixture.get(CollectionRowRepo);
     pageRepo = moduleFixture.get(PageRepo);
     shareRepo = moduleFixture.get(ShareRepo);
     db = moduleFixture.get(KYSELY_MODULE_CONNECTION_TOKEN());
@@ -400,6 +403,121 @@ describe('CollectionService (e2e)', () => {
         created.database.id,
       );
       expect(all.map((p) => p.id)).toContain(titleProp.id);
+    });
+  });
+
+  describe('row endpoints', () => {
+    it('rows/create creates a collection_rows record + a row page with is_collection_row flag', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Rows Database',
+      });
+
+      const row = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+
+      expect(row.collectionPageId).toBe(created.database.id);
+
+      const dbRow = await collectionRowRepo.findById(row.id);
+      expect(dbRow).toBeDefined();
+      expect(dbRow.collectionPageId).toBe(created.database.id);
+
+      // baseFields on PageRepo omits is_collection_row / parent_page_id
+      // relevance, so query pages directly.
+      const rowPage = await db
+        .selectFrom('pages')
+        .select(['isCollectionRow', 'parentPageId', 'deletedAt'])
+        .where('id', '=', row.pageId)
+        .executeTakeFirst();
+      expect(rowPage.isCollectionRow).toBe(true);
+      expect(rowPage.parentPageId).toBe(created.database.id);
+      expect(rowPage.deletedAt).toBeNull();
+    });
+
+    it('rows/create positions two rows so the second sorts after the first', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Rows Position Database',
+      });
+
+      const first = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+      const second = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+
+      expect(first.position).not.toBe(second.position);
+      expect(second.position > first.position).toBe(true);
+    });
+
+    it('rows/update sets a cell, then a null value removes that key [jsonb_set_many delete semantics]', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Rows Update Database',
+      });
+      const row = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+      const titlePropId = created.properties[0].id;
+
+      const updated = await collectionService.updateRow({
+        user: user as any,
+        rowId: row.id,
+        cells: { [titlePropId]: 'Hello' },
+      });
+      expect(updated.cells[titlePropId]).toBe('Hello');
+      expect(updated.lastUpdatedById).toBe(user.id);
+
+      const cleared = await collectionService.updateRow({
+        user: user as any,
+        rowId: row.id,
+        cells: { [titlePropId]: null },
+      });
+      expect(cleared.cells[titlePropId]).toBeUndefined();
+      expect(Object.prototype.hasOwnProperty.call(cleared.cells, titlePropId)).toBe(
+        false,
+      );
+    });
+
+    it('rows/delete trashes both the row page and the collection_rows record [R5]', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Rows Delete Database',
+      });
+      const row = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+
+      const result = await collectionService.deleteRow({
+        user: user as any,
+        rowId: row.id,
+      });
+      expect(result.success).toBe(true);
+
+      const rowPage = await pageRepo.findById(row.pageId);
+      expect(rowPage.deletedAt).not.toBeNull();
+
+      const dbRow = await db
+        .selectFrom('collectionRows')
+        .select(['deletedAt'])
+        .where('id', '=', row.id)
+        .executeTakeFirst();
+      expect(dbRow.deletedAt).not.toBeNull();
     });
   });
 });

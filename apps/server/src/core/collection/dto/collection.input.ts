@@ -63,3 +63,21 @@ export class DeleteCollectionPropertyDto {
   @IsString()
   id: string;
 }
+
+export class CreateCollectionRowDto {
+  @IsString()
+  collectionPageId: string;
+}
+
+export class UpdateCollectionRowDto {
+  @IsString()
+  rowId: string;
+
+  @IsObject()
+  cells: Record<string, unknown>;
+}
+
+export class DeleteCollectionRowDto {
+  @IsString()
+  rowId: string;
+}

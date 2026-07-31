@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectKysely } from 'nestjs-kysely';
+import { sql } from 'kysely';
 import { KyselyDB, KyselyTransaction } from '../../types/kysely.types';
 import { dbOrTx } from '../../utils';
 import {
@@ -71,6 +72,31 @@ export class CollectionRowRepo {
     return db
       .updateTable('collectionRows')
       .set({ ...data, updatedAt: new Date() })
+      .where('id', '=', id)
+      .returningAll()
+      .executeTakeFirst();
+  }
+
+  // Patches `cells` via the shared jsonb_set_many() SQL function (defined in
+  // the collections migration): a `null` value in `patches` deletes that
+  // key, anything else is jsonb_set. See collections.migration.spec.ts.
+  async patchCells(
+    id: string,
+    patches: Record<string, unknown>,
+    lastUpdatedById: string,
+    trx?: KyselyTransaction,
+  ): Promise<CollectionRow> {
+    const db = dbOrTx(this.db, trx);
+    return db
+      .updateTable('collectionRows')
+      .set({
+        // postgres-js auto-serializes a plain JS object param to JSON; passing
+        // a pre-stringified string here double-encodes it (jsonb_typeof would
+        // come back 'string', not 'object' — caught by patchCells test).
+        cells: sql`jsonb_set_many(cells, ${patches}::jsonb)`,
+        lastUpdatedById,
+        updatedAt: new Date(),
+      })
       .where('id', '=', id)
       .returningAll()
       .executeTakeFirst();
