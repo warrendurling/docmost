@@ -83,4 +83,25 @@ export class CollectionViewRepo {
     const db = dbOrTx(this.db, trx);
     await db.deleteFrom('collectionViews').where('id', '=', id).execute();
   }
+
+  // [fix D] Deletes `id` only if it isn't the last view of its collection —
+  // the "more than 1 view exists" check is a subquery inside the DELETE
+  // itself (one statement), closing the count-then-delete TOCTOU that a
+  // separate SELECT-then-DELETE has. Returns the number of rows actually
+  // deleted (0 means the guard blocked it — caller decides how to report).
+  async deleteIfNotLast(
+    id: string,
+    collectionPageId: string,
+    trx?: KyselyTransaction,
+  ): Promise<number> {
+    const db = dbOrTx(this.db, trx);
+    const result = await db
+      .deleteFrom('collectionViews')
+      .where('id', '=', id)
+      .where(
+        sql<boolean>`(select count(*) from collection_views where collection_page_id = ${collectionPageId}) > 1`,
+      )
+      .executeTakeFirst();
+    return Number(result.numDeletedRows);
+  }
 }

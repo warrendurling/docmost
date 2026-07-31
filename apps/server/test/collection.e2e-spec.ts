@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { BadRequestException, Module } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
 import { FastifyAdapter } from '@nestjs/platform-fastify';
@@ -382,6 +382,45 @@ describe('CollectionService (e2e)', () => {
       ).rejects.toThrow();
     });
 
+    it('[fix C] updateProperty() rejects an invalid position string', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Bad Position Property Database',
+      });
+      const property = await collectionService.createProperty({
+        user: user as any,
+        collectionPageId: created.database.id,
+        name: 'Movable',
+        type: 'text',
+      });
+
+      await expect(
+        collectionService.updateProperty({
+          user: user as any,
+          collectionPageId: created.database.id,
+          id: property.id,
+          position: 'A',
+        }),
+      ).rejects.toThrow(BadRequestException);
+
+      const fetched = await collectionPropertyRepo.findById(
+        created.database.id,
+        property.id,
+      );
+      expect(fetched.position).toBe(property.position);
+
+      // subsequent creates must not be bricked by the (rejected) bad key
+      const next = await collectionService.createProperty({
+        user: user as any,
+        collectionPageId: created.database.id,
+        name: 'After',
+        type: 'text',
+      });
+      expect(next.id).toBeTruthy();
+    });
+
     it('deleteProperty() soft-deletes a non-primary property', async () => {
       const created = await collectionService.create({
         user: user as any,
@@ -661,6 +700,36 @@ describe('CollectionService (e2e)', () => {
       });
     });
 
+    it('[fix C] updateView() rejects an invalid position string', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Bad Position View Database',
+      });
+      const view = created.views[0];
+
+      await expect(
+        collectionService.updateView({
+          user: user as any,
+          id: view.id,
+          position: 'A',
+        }),
+      ).rejects.toThrow(BadRequestException);
+
+      const fetched = await collectionViewRepo.findById(view.id);
+      expect(fetched.position).toBe(view.position);
+
+      // subsequent creates must not be bricked by the (rejected) bad key
+      const next = await collectionService.createView({
+        user: user as any,
+        collectionPageId: created.database.id,
+        type: 'table',
+        name: 'After',
+      });
+      expect(next.id).toBeTruthy();
+    });
+
     it('views/delete removes a non-last view, then rejects deleting the remaining last view [R18]', async () => {
       const created = await collectionService.create({
         user: user as any,
@@ -697,6 +766,28 @@ describe('CollectionService (e2e)', () => {
       ).rejects.toThrow();
 
       all = await collectionViewRepo.findByCollectionPageId(
+        created.database.id,
+      );
+      expect(all).toHaveLength(1);
+      expect(all[0].id).toBe(firstView.id);
+    });
+
+    it('[fix D] the atomic delete-if-not-last query deletes 0 rows for the last remaining view', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Atomic Delete Guard Database',
+      });
+      const firstView = created.views[0];
+
+      const deletedCount = await collectionViewRepo.deleteIfNotLast(
+        firstView.id,
+        created.database.id,
+      );
+      expect(deletedCount).toBe(0);
+
+      const all = await collectionViewRepo.findByCollectionPageId(
         created.database.id,
       );
       expect(all).toHaveLength(1);
@@ -949,6 +1040,147 @@ describe('CollectionService (e2e)', () => {
             { propertyId: dueProp.id, operator: 'before', value: 'garbage' },
           ],
         },
+      });
+
+      const result = await collectionService.rowsList({
+        user: user as any,
+        collectionPageId: created.database.id,
+        viewId,
+      });
+
+      expect(result.rows.map((r) => r.id)).toContain(row.id);
+    });
+
+    it('[fix A] a calendar-invalid date filter value ("2024-02-30") does not throw and skips the clause', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Filter Bad Calendar Date Database',
+      });
+      const viewId = created.views[0].id;
+      const dueProp = await collectionService.createProperty({
+        user: user as any,
+        collectionPageId: created.database.id,
+        name: 'Due',
+        type: 'date',
+      });
+
+      const row = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+
+      await collectionService.updateView({
+        user: user as any,
+        id: viewId,
+        config: {
+          filters: [
+            { propertyId: dueProp.id, operator: 'before', value: '2024-02-30' },
+          ],
+        },
+      });
+
+      const result = await collectionService.rowsList({
+        user: user as any,
+        collectionPageId: created.database.id,
+        viewId,
+      });
+
+      expect(result.rows.map((r) => r.id)).toContain(row.id);
+    });
+
+    it('[fix A] a JS Date#toString() value with a named-zone offset does not throw and skips the clause', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Filter Date ToString Database',
+      });
+      const viewId = created.views[0].id;
+      const dueProp = await collectionService.createProperty({
+        user: user as any,
+        collectionPageId: created.database.id,
+        name: 'Due',
+        type: 'date',
+      });
+
+      const row = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+
+      await collectionService.updateView({
+        user: user as any,
+        id: viewId,
+        config: {
+          filters: [
+            {
+              propertyId: dueProp.id,
+              operator: 'before',
+              value:
+                'Thu Jul 31 2026 10:00:00 GMT+1200 (New Zealand Standard Time)',
+            },
+          ],
+        },
+      });
+
+      const result = await collectionService.rowsList({
+        user: user as any,
+        collectionPageId: created.database.id,
+        viewId,
+      });
+
+      expect(result.rows.map((r) => r.id)).toContain(row.id);
+    });
+
+    it('[fix B] views/update with config.filters as a non-array object does not throw on rows/list', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Malformed Filters Config Database',
+      });
+      const viewId = created.views[0].id;
+
+      const row = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+
+      await collectionService.updateView({
+        user: user as any,
+        id: viewId,
+        config: { filters: {} as any },
+      });
+
+      const result = await collectionService.rowsList({
+        user: user as any,
+        collectionPageId: created.database.id,
+        viewId,
+      });
+
+      expect(result.rows.map((r) => r.id)).toContain(row.id);
+    });
+
+    it('[fix B] views/update with config.sorts as a non-array object does not throw on rows/list', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Malformed Sorts Config Database',
+      });
+      const viewId = created.views[0].id;
+
+      const row = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+
+      await collectionService.updateView({
+        user: user as any,
+        id: viewId,
+        config: { sorts: {} as any },
       });
 
       const result = await collectionService.rowsList({

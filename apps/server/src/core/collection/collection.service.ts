@@ -281,7 +281,13 @@ export class CollectionService {
     if (opts.name !== undefined) patch.name = opts.name;
     if (opts.typeOptions !== undefined)
       patch.typeOptions = opts.typeOptions as any;
-    if (opts.position !== undefined) patch.position = opts.position;
+    if (opts.position !== undefined) {
+      // [fix C] a stored key generateJitteredKeyBetween can't parse would
+      // brick the NEXT create (properties/create) with a 500. Validate now,
+      // the same way movePage validates page positions.
+      this.assertValidPositionKey(opts.position);
+      patch.position = opts.position;
+    }
 
     try {
       return await this.collectionPropertyRepo.update(
@@ -496,9 +502,25 @@ export class CollectionService {
       {};
     if (opts.config !== undefined) patch.config = opts.config as any;
     if (opts.name !== undefined) patch.name = opts.name;
-    if (opts.position !== undefined) patch.position = opts.position;
+    if (opts.position !== undefined) {
+      // [fix C] see updateProperty — a bad key here would brick views/create.
+      this.assertValidPositionKey(opts.position);
+      patch.position = opts.position;
+    }
 
     return this.collectionViewRepo.update(opts.id, patch);
+  }
+
+  // [fix C] Mirrors PageService.movePage's position validation (page.service.ts
+  // ~line 806): the fractional-indexing lib throws on an unusable key, so
+  // probe it with a throwaway generateJitteredKeyBetween call before
+  // persisting — a bad stored key would otherwise brick the next create.
+  private assertValidPositionKey(position: string): void {
+    try {
+      generateJitteredKeyBetween(position, null);
+    } catch {
+      throw new BadRequestException('Invalid position');
+    }
   }
 
   async deleteView(opts: {
@@ -516,15 +538,18 @@ export class CollectionService {
     }
     await this.pageAccessService.validateCanEdit(page, opts.user);
 
-    const count = await this.collectionViewRepo.countByCollectionPageId(
+    // [R18][fix D] rendering + rows/list require a viewId; can't drop to
+    // zero. The "more than 1 view" check used to be a separate count query
+    // before the delete — a TOCTOU window where two concurrent deletes on a
+    // 2-view collection could both pass the count and both delete, hitting
+    // zero. deleteIfNotLast folds the check into the DELETE statement itself.
+    const deletedCount = await this.collectionViewRepo.deleteIfNotLast(
+      opts.id,
       view.collectionPageId,
     );
-    if (count <= 1) {
-      // [R18] rendering + rows/list require a viewId; can't drop to zero.
+    if (deletedCount === 0) {
       throw new BadRequestException('cannot delete the only view');
     }
-
-    await this.collectionViewRepo.delete(opts.id);
 
     return { success: true };
   }
@@ -583,16 +608,25 @@ export class CollectionService {
       .where('p.spaceId', '=', databasePage.spaceId);
 
     const config = (view.config ?? {}) as {
-      filters?: unknown[];
-      sorts?: unknown[];
+      filters?: unknown;
+      sorts?: unknown;
     };
 
-    for (const filter of config.filters ?? []) {
+    // [fix B] config is only DTO-validated as `object` — filters/sorts can
+    // legally arrive as `{}` instead of an array. Iterating/slicing that
+    // would throw ("not iterable" / no .slice) and 500 rows/list for every
+    // viewer of the view. Guard with Array.isArray, same never-fatal spirit
+    // as the unknown-propertyId skip below.
+    const filters = Array.isArray(config.filters) ? config.filters : [];
+    for (const filter of filters) {
       query = this.applyRowFilter(query, filter, propertyMap);
     }
 
     // spec §10: sort cap 5
-    const sorts = (config.sorts ?? []).slice(0, 5);
+    const sorts = (Array.isArray(config.sorts) ? config.sorts : []).slice(
+      0,
+      5,
+    );
     if (sorts.length === 0) {
       // fractional-index keys need bytewise ("C") ordering — default collation
       // misorders appended keys (e.g. 'aa' before 'aA').
@@ -656,6 +690,34 @@ export class CollectionService {
     }
   }
 
+  // [fix A] Strict ISO-8601 date/datetime check for date filter values.
+  // Regex first (rejects JS Date#toString() output like the
+  // "GMT+1200 (New Zealand Standard Time)" form Postgres can't cast), then a
+  // calendar round-trip check (rejects regex-shaped but impossible dates
+  // like "2024-02-30", which JS normalizes to Mar 1 instead of erroring).
+  private static readonly ISO_DATE_RE =
+    /^(\d{4})-(\d{2})-(\d{2})([T ]\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+-]\d{2}:?\d{2})?)?$/;
+
+  private isValidIsoDateFilterValue(value: unknown): value is string {
+    if (typeof value !== 'string') return false;
+    const match = CollectionService.ISO_DATE_RE.exec(value);
+    if (!match) return false;
+
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const roundTrip = new Date(Date.UTC(year, month - 1, day));
+    if (
+      roundTrip.getUTCFullYear() !== year ||
+      roundTrip.getUTCMonth() !== month - 1 ||
+      roundTrip.getUTCDate() !== day
+    ) {
+      return false;
+    }
+
+    return !Number.isNaN(Date.parse(value));
+  }
+
   // Compiles one `{propertyId, operator, value}` filter condition onto the
   // query. Unknown propertyId or an operator that doesn't apply to the
   // property's type is skipped, never fatal [R19].
@@ -717,9 +779,14 @@ export class CollectionService {
         return query.where(expr, op, num) as QB;
       }
       case 'date': {
-        // [R19] never fatal: an unparseable date value would throw on the
-        // ::timestamptz cast and 500 rows/list for every viewer — skip it.
-        if (Number.isNaN(Date.parse(String(value)))) return query;
+        // [R19][fix A] never fatal: a value Postgres can't cast to
+        // timestamptz would 500 rows/list for every viewer. Date.parse alone
+        // isn't a strict enough guard — JS accepts and normalizes calendar-
+        // invalid dates ("2024-02-30" -> Mar 1) and produces toString()
+        // output PG rejects (named-zone offsets like "GMT+1200"). Require a
+        // strict ISO date/datetime PG will also accept; anything else skips
+        // the clause like an unknown propertyId.
+        if (!this.isValidIsoDateFilterValue(value)) return query;
         if (operator === 'on') {
           return query.where(
             sql`date_trunc('day', ${expr})`,
