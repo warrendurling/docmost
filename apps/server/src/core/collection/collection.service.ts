@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -20,6 +21,7 @@ import {
   User,
 } from '@docmost/db/types/entity.types';
 import { generateBasePropertyId } from '../../common/helpers';
+import { ALLOWED_PROPERTY_TYPES } from './dto/collection.input';
 import { PageService } from '../page/services/page.service';
 import { CreatePageDto } from '../page/dto/create-page.dto';
 import { PageAccessService } from '../page/page-access/page-access.service';
@@ -178,6 +180,129 @@ export class CollectionService {
     await this.pageAccessService.validateCanEdit(page, opts.user);
 
     await this.pageRepo.removePage(opts.pageId, opts.user.id, page.workspaceId);
+
+    return { success: true };
+  }
+
+  async createProperty(opts: {
+    user: User;
+    collectionPageId: string;
+    name: string;
+    type: string;
+    typeOptions?: object;
+  }): Promise<CollectionProperty> {
+    if (opts.type === 'title') {
+      // [R9] Title is auto-created only; users can't add another.
+      throw new BadRequestException('Cannot create a property of type title');
+    }
+    if (!(ALLOWED_PROPERTY_TYPES as readonly string[]).includes(opts.type)) {
+      throw new BadRequestException(`Invalid property type: ${opts.type}`);
+    }
+
+    const page = await this.pageRepo.findById(opts.collectionPageId);
+    if (!page || page.deletedAt) {
+      throw new NotFoundException('Page not found');
+    }
+    await this.pageAccessService.validateCanEdit(page, opts.user);
+
+    const existing = await this.collectionPropertyRepo.findByCollectionPageId(
+      opts.collectionPageId,
+    );
+    const lastPosition = existing.length
+      ? existing[existing.length - 1].position
+      : null;
+
+    try {
+      return await this.collectionPropertyRepo.insert({
+        id: generateBasePropertyId(),
+        collectionPageId: opts.collectionPageId,
+        name: opts.name,
+        type: opts.type,
+        typeOptions: (opts.typeOptions as any) ?? null,
+        position: generateJitteredKeyBetween(lastPosition, null),
+        isPrimary: false,
+        workspaceId: page.workspaceId,
+      });
+    } catch (err: any) {
+      if (err?.code === '23505') {
+        throw new ConflictException(
+          'A column with that name already exists',
+        );
+      }
+      throw err;
+    }
+  }
+
+  async updateProperty(opts: {
+    user: User;
+    collectionPageId: string;
+    id: string;
+    name?: string;
+    typeOptions?: object;
+    position?: string;
+  }): Promise<CollectionProperty> {
+    const page = await this.pageRepo.findById(opts.collectionPageId);
+    if (!page || page.deletedAt) {
+      throw new NotFoundException('Page not found');
+    }
+    await this.pageAccessService.validateCanEdit(page, opts.user);
+
+    const property = await this.collectionPropertyRepo.findById(
+      opts.collectionPageId,
+      opts.id,
+    );
+    if (!property) {
+      throw new NotFoundException('Property not found');
+    }
+
+    const patch: Partial<
+      Pick<CollectionProperty, 'name' | 'typeOptions' | 'position'>
+    > = {};
+    if (opts.name !== undefined) patch.name = opts.name;
+    if (opts.typeOptions !== undefined)
+      patch.typeOptions = opts.typeOptions as any;
+    if (opts.position !== undefined) patch.position = opts.position;
+
+    try {
+      return await this.collectionPropertyRepo.update(
+        opts.collectionPageId,
+        opts.id,
+        patch,
+      );
+    } catch (err: any) {
+      if (err?.code === '23505') {
+        throw new ConflictException(
+          'A column with that name already exists',
+        );
+      }
+      throw err;
+    }
+  }
+
+  async deleteProperty(opts: {
+    user: User;
+    collectionPageId: string;
+    id: string;
+  }): Promise<{ success: true }> {
+    const page = await this.pageRepo.findById(opts.collectionPageId);
+    if (!page || page.deletedAt) {
+      throw new NotFoundException('Page not found');
+    }
+    await this.pageAccessService.validateCanEdit(page, opts.user);
+
+    const property = await this.collectionPropertyRepo.findById(
+      opts.collectionPageId,
+      opts.id,
+    );
+    if (!property) {
+      throw new NotFoundException('Property not found');
+    }
+    if (property.isPrimary) {
+      // [R9] Title column can't be deleted.
+      throw new BadRequestException('Cannot delete the primary property');
+    }
+
+    await this.collectionPropertyRepo.softDelete(opts.collectionPageId, opts.id);
 
     return { success: true };
   }

@@ -1,6 +1,12 @@
 import { Body, Controller, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs/common';
 import { CollectionService } from './collection.service';
-import { CreateCollectionDto, CollectionPageIdDto } from './dto/collection.input';
+import {
+  CreateCollectionDto,
+  CollectionPageIdDto,
+  CreateCollectionPropertyDto,
+  UpdateCollectionPropertyDto,
+  DeleteCollectionPropertyDto,
+} from './dto/collection.input';
 import { AuthUser } from '../../common/decorators/auth-user.decorator';
 import { AuthWorkspace } from '../../common/decorators/auth-workspace.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -42,5 +48,49 @@ export class CollectionController {
   @Post('delete')
   delete(@Body() dto: CollectionPageIdDto, @AuthUser() user: User) {
     return this.collectionService.delete({ user, pageId: dto.pageId });
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('properties/create')
+  createProperty(
+    @Body() dto: CreateCollectionPropertyDto,
+    @AuthUser() user: User,
+  ) {
+    return this.collectionService.createProperty({
+      user,
+      collectionPageId: dto.collectionPageId,
+      name: dto.name,
+      type: dto.type,
+      typeOptions: dto.typeOptions,
+    });
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('properties/update')
+  updateProperty(
+    @Body() dto: UpdateCollectionPropertyDto,
+    @AuthUser() user: User,
+  ) {
+    return this.collectionService.updateProperty({
+      user,
+      collectionPageId: dto.collectionPageId,
+      id: dto.id,
+      name: dto.name,
+      typeOptions: dto.typeOptions,
+      position: dto.position,
+    });
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('properties/delete')
+  deleteProperty(
+    @Body() dto: DeleteCollectionPropertyDto,
+    @AuthUser() user: User,
+  ) {
+    return this.collectionService.deleteProperty({
+      user,
+      collectionPageId: dto.collectionPageId,
+      id: dto.id,
+    });
   }
 }

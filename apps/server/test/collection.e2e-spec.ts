@@ -229,4 +229,177 @@ describe('CollectionService (e2e)', () => {
     const page = await pageRepo.findById(created.database.id);
     expect(page.deletedAt).not.toBeNull();
   });
+
+  describe('property endpoints', () => {
+    it('createProperty() adds a text property after the Title column', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Props Database',
+      });
+      const titleProp = created.properties[0];
+
+      const property = await collectionService.createProperty({
+        user: user as any,
+        collectionPageId: created.database.id,
+        name: 'Notes',
+        type: 'text',
+      });
+
+      expect(property.isPrimary).toBe(false);
+      expect(property.type).toBe('text');
+      expect(property.position > titleProp.position).toBe(true);
+
+      const all = await collectionPropertyRepo.findByCollectionPageId(
+        created.database.id,
+      );
+      expect(all).toHaveLength(2);
+      expect(all.map((p) => p.id)).toContain(property.id);
+    });
+
+    it('createProperty() rejects type "title"', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Reject Title Type DB',
+      });
+
+      await expect(
+        collectionService.createProperty({
+          user: user as any,
+          collectionPageId: created.database.id,
+          name: 'Another Title',
+          type: 'title' as any,
+        }),
+      ).rejects.toThrow();
+    });
+
+    it('createProperty() rejects a bogus type', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Reject Bogus Type DB',
+      });
+
+      await expect(
+        collectionService.createProperty({
+          user: user as any,
+          collectionPageId: created.database.id,
+          name: 'Weird',
+          type: 'foo' as any,
+        }),
+      ).rejects.toThrow();
+    });
+
+    it('updateProperty() persists a name change', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Update Database',
+      });
+      const property = await collectionService.createProperty({
+        user: user as any,
+        collectionPageId: created.database.id,
+        name: 'Old Name',
+        type: 'text',
+      });
+
+      const updated = await collectionService.updateProperty({
+        user: user as any,
+        collectionPageId: created.database.id,
+        id: property.id,
+        name: 'New Name',
+      });
+      expect(updated.name).toBe('New Name');
+
+      const fetched = await collectionPropertyRepo.findById(
+        created.database.id,
+        property.id,
+      );
+      expect(fetched.name).toBe('New Name');
+    });
+
+    it('updateProperty() maps a name collision to a conflict error', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Collision Database',
+      });
+      await collectionService.createProperty({
+        user: user as any,
+        collectionPageId: created.database.id,
+        name: 'Existing',
+        type: 'text',
+      });
+      const second = await collectionService.createProperty({
+        user: user as any,
+        collectionPageId: created.database.id,
+        name: 'Other',
+        type: 'text',
+      });
+
+      await expect(
+        collectionService.updateProperty({
+          user: user as any,
+          collectionPageId: created.database.id,
+          id: second.id,
+          name: '  existing  ',
+        }),
+      ).rejects.toThrow();
+    });
+
+    it('deleteProperty() soft-deletes a non-primary property', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Delete Prop Database',
+      });
+      const property = await collectionService.createProperty({
+        user: user as any,
+        collectionPageId: created.database.id,
+        name: 'Removable',
+        type: 'text',
+      });
+
+      await collectionService.deleteProperty({
+        user: user as any,
+        collectionPageId: created.database.id,
+        id: property.id,
+      });
+
+      const all = await collectionPropertyRepo.findByCollectionPageId(
+        created.database.id,
+      );
+      expect(all.map((p) => p.id)).not.toContain(property.id);
+    });
+
+    it('deleteProperty() rejects deleting the primary Title property', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Protect Title Database',
+      });
+      const titleProp = created.properties[0];
+
+      await expect(
+        collectionService.deleteProperty({
+          user: user as any,
+          collectionPageId: created.database.id,
+          id: titleProp.id,
+        }),
+      ).rejects.toThrow();
+
+      const all = await collectionPropertyRepo.findByCollectionPageId(
+        created.database.id,
+      );
+      expect(all.map((p) => p.id)).toContain(titleProp.id);
+    });
+  });
 });
