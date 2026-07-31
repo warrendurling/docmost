@@ -10,6 +10,10 @@ import {
   useCollectionInfoQuery,
   useRowsListQuery,
   useUpdateRowMutation,
+  useCreatePropertyMutation,
+  useUpdatePropertyMutation,
+  useDeletePropertyMutation,
+  useUpdateViewMutation,
 } from "@/features/collection/queries/collection-query";
 import {
   ICollectionInfo,
@@ -35,6 +39,10 @@ vi.mock("@/features/collection/queries/collection-query", () => ({
   useCollectionInfoQuery: vi.fn(),
   useRowsListQuery: vi.fn(),
   useUpdateRowMutation: vi.fn(),
+  useCreatePropertyMutation: vi.fn(),
+  useUpdatePropertyMutation: vi.fn(),
+  useDeletePropertyMutation: vi.fn(),
+  useUpdateViewMutation: vi.fn(),
 }));
 
 vi.mock("@/features/page/queries/page-query", () => ({
@@ -120,6 +128,18 @@ describe("CollectionTable", () => {
       mutate: vi.fn(),
     } as any);
     vi.mocked(useUpdatePageMutation).mockReturnValue({
+      mutate: vi.fn(),
+    } as any);
+    vi.mocked(useCreatePropertyMutation).mockReturnValue({
+      mutate: vi.fn(),
+    } as any);
+    vi.mocked(useUpdatePropertyMutation).mockReturnValue({
+      mutate: vi.fn(),
+    } as any);
+    vi.mocked(useDeletePropertyMutation).mockReturnValue({
+      mutate: vi.fn(),
+    } as any);
+    vi.mocked(useUpdateViewMutation).mockReturnValue({
       mutate: vi.fn(),
     } as any);
 

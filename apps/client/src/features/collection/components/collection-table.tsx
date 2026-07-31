@@ -1,19 +1,31 @@
-import { useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ColumnDef,
+  Header,
   flexRender,
   getCoreRowModel,
   useReactTable,
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Loader, Text } from "@mantine/core";
+import { combine } from "@atlaskit/pragmatic-drag-and-drop/combine";
+import {
+  draggable,
+  dropTargetForElements,
+} from "@atlaskit/pragmatic-drag-and-drop/element/adapter";
 import {
   useCollectionInfoQuery,
   useRowsListQuery,
+  useUpdateViewMutation,
 } from "@/features/collection/queries/collection-query";
-import { ICollectionRow } from "@/features/collection/services/collection-service";
-import { buildColumns } from "@/features/collection/components/build-columns";
+import {
+  ICollectionRow,
+  ICollectionView,
+} from "@/features/collection/services/collection-service";
+import { buildColumns, IBuiltColumn } from "@/features/collection/components/build-columns";
 import { EditableCell } from "@/features/collection/components/cell-editors/editable-cell";
+import { ColumnHeaderMenu } from "@/features/collection/components/column-header-menu";
+import { reorderColumns } from "@/features/collection/components/reorder-columns";
 
 interface CollectionTableProps {
   collectionPageId: string;
@@ -22,6 +34,74 @@ interface CollectionTableProps {
 
 const ROW_HEIGHT = 36;
 const TABLE_MAX_HEIGHT = "calc(100vh - 220px)";
+const COLUMN_DRAG_TYPE = "collection-column";
+
+function ColumnHeaderCell({
+  header,
+  col,
+  collectionPageId,
+  viewId,
+  viewConfig,
+  onReorder,
+}: {
+  header: Header<ICollectionRow, unknown>;
+  col: IBuiltColumn | undefined;
+  collectionPageId: string;
+  viewId: string;
+  viewConfig: ICollectionView["config"];
+  onReorder: (fromId: string, toId: string) => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [isDragging, setIsDragging] = useState(false);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    return combine(
+      draggable({
+        element: el,
+        getInitialData: () => ({ type: COLUMN_DRAG_TYPE, columnId: header.column.id }),
+        onDragStart: () => setIsDragging(true),
+        onDrop: () => setIsDragging(false),
+      }),
+      dropTargetForElements({
+        element: el,
+        canDrop: ({ source }) =>
+          source.data.type === COLUMN_DRAG_TYPE &&
+          source.data.columnId !== header.column.id,
+        onDrop: ({ source }) => {
+          onReorder(source.data.columnId as string, header.column.id);
+        },
+      }),
+    );
+  }, [header.column.id, onReorder]);
+
+  return (
+    <div
+      ref={ref}
+      style={{
+        flex: 1,
+        padding: "8px 12px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 4,
+        cursor: "grab",
+        opacity: isDragging ? 0.4 : 1,
+      }}
+    >
+      <span>{flexRender(header.column.columnDef.header, header.getContext())}</span>
+      {col && (
+        <ColumnHeaderMenu
+          collectionPageId={collectionPageId}
+          viewId={viewId}
+          viewConfig={viewConfig}
+          property={{ id: col.propertyId, name: col.name, type: col.type }}
+        />
+      )}
+    </div>
+  );
+}
 
 export function CollectionTable({
   collectionPageId,
@@ -40,6 +120,27 @@ export function CollectionTable({
   const builtColumns = useMemo(
     () => buildColumns(info?.properties ?? [], view?.config),
     [info?.properties, view?.config],
+  );
+  const builtColumnsById = useMemo(
+    () => new Map(builtColumns.map((c) => [c.id, c])),
+    [builtColumns],
+  );
+
+  const updateViewMutation = useUpdateViewMutation(collectionPageId);
+  const allPropertyIds = useMemo(
+    () => (info?.properties ?? []).map((p) => p.id),
+    [info?.properties],
+  );
+  const columnOrder = view?.config?.columnOrder ?? [];
+  const handleColumnReorder = useCallback(
+    (fromId: string, toId: string) => {
+      const newOrder = reorderColumns(columnOrder, allPropertyIds, fromId, toId);
+      updateViewMutation.mutate({
+        id: viewId,
+        config: { ...view?.config, columnOrder: newOrder },
+      });
+    },
+    [columnOrder, allPropertyIds, view?.config, viewId, updateViewMutation],
   );
 
   const columns = useMemo<ColumnDef<ICollectionRow>[]>(
@@ -119,12 +220,15 @@ export function CollectionTable({
             }}
           >
             {headerGroup.headers.map((header) => (
-              <div key={header.id} style={{ flex: 1, padding: "8px 12px" }}>
-                {flexRender(
-                  header.column.columnDef.header,
-                  header.getContext(),
-                )}
-              </div>
+              <ColumnHeaderCell
+                key={header.id}
+                header={header}
+                col={builtColumnsById.get(header.column.id)}
+                collectionPageId={collectionPageId}
+                viewId={viewId}
+                viewConfig={view?.config}
+                onReorder={handleColumnReorder}
+              />
             ))}
           </div>
         ))}
