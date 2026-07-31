@@ -81,3 +81,38 @@ export class DeleteCollectionRowDto {
   @IsString()
   rowId: string;
 }
+
+export const ALLOWED_VIEW_TYPES = ['table'] as const;
+
+export class CreateCollectionViewDto {
+  @IsString()
+  collectionPageId: string;
+
+  @IsIn(ALLOWED_VIEW_TYPES)
+  type: string;
+
+  @IsString()
+  name: string;
+}
+
+export class UpdateCollectionViewDto {
+  @IsString()
+  id: string;
+
+  @IsOptional()
+  @IsObject()
+  config?: object;
+
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  position?: string;
+}
+
+export class DeleteCollectionViewDto {
+  @IsString()
+  id: string;
+}

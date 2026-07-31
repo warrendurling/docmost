@@ -520,4 +520,140 @@ describe('CollectionService (e2e)', () => {
       expect(dbRow.deletedAt).not.toBeNull();
     });
   });
+
+  describe('view endpoints', () => {
+    it('views/create adds a 2nd table view after the auto-created one', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Views Database',
+      });
+      const firstView = created.views[0];
+
+      const view = await collectionService.createView({
+        user: user as any,
+        collectionPageId: created.database.id,
+        type: 'table',
+        name: 'Second Table',
+      });
+
+      expect(view.type).toBe('table');
+      expect(view.name).toBe('Second Table');
+      expect(view.position > firstView.position).toBe(true);
+
+      const all = await collectionViewRepo.findByCollectionPageId(
+        created.database.id,
+      );
+      expect(all).toHaveLength(2);
+      expect(all[0].id).toBe(firstView.id);
+      expect(all[1].id).toBe(view.id);
+    });
+
+    it('views/create rejects type "kanban" (V2)', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Reject Kanban DB',
+      });
+
+      await expect(
+        collectionService.createView({
+          user: user as any,
+          collectionPageId: created.database.id,
+          type: 'kanban' as any,
+          name: 'Board',
+        }),
+      ).rejects.toThrow();
+    });
+
+    it('views/create rejects a bogus type', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Reject Bogus View Type DB',
+      });
+
+      await expect(
+        collectionService.createView({
+          user: user as any,
+          collectionPageId: created.database.id,
+          type: 'foo' as any,
+          name: 'Weird',
+        }),
+      ).rejects.toThrow();
+    });
+
+    it('views/update persists config and name changes', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Update View Database',
+      });
+      const view = created.views[0];
+
+      const updated = await collectionService.updateView({
+        user: user as any,
+        id: view.id,
+        name: 'Renamed View',
+        config: { sorts: [{ propertyId: 'x', direction: 'asc' }] },
+      });
+
+      expect(updated.name).toBe('Renamed View');
+      expect(updated.config).toEqual({
+        sorts: [{ propertyId: 'x', direction: 'asc' }],
+      });
+
+      const fetched = await collectionViewRepo.findById(view.id);
+      expect(fetched.name).toBe('Renamed View');
+      expect(fetched.config).toEqual({
+        sorts: [{ propertyId: 'x', direction: 'asc' }],
+      });
+    });
+
+    it('views/delete removes a non-last view, then rejects deleting the remaining last view [R18]', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Delete View Database',
+      });
+      const firstView = created.views[0];
+
+      const secondView = await collectionService.createView({
+        user: user as any,
+        collectionPageId: created.database.id,
+        type: 'table',
+        name: 'Second',
+      });
+
+      const result = await collectionService.deleteView({
+        user: user as any,
+        id: secondView.id,
+      });
+      expect(result.success).toBe(true);
+
+      let all = await collectionViewRepo.findByCollectionPageId(
+        created.database.id,
+      );
+      expect(all).toHaveLength(1);
+      expect(all[0].id).toBe(firstView.id);
+
+      await expect(
+        collectionService.deleteView({
+          user: user as any,
+          id: firstView.id,
+        }),
+      ).rejects.toThrow();
+
+      all = await collectionViewRepo.findByCollectionPageId(
+        created.database.id,
+      );
+      expect(all).toHaveLength(1);
+      expect(all[0].id).toBe(firstView.id);
+    });
+  });
 });

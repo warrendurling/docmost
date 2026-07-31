@@ -23,7 +23,10 @@ import {
   User,
 } from '@docmost/db/types/entity.types';
 import { generateBasePropertyId } from '../../common/helpers';
-import { ALLOWED_PROPERTY_TYPES } from './dto/collection.input';
+import {
+  ALLOWED_PROPERTY_TYPES,
+  ALLOWED_VIEW_TYPES,
+} from './dto/collection.input';
 import { PageService } from '../page/services/page.service';
 import { CreatePageDto } from '../page/dto/create-page.dto';
 import { PageAccessService } from '../page/page-access/page-access.service';
@@ -408,6 +411,96 @@ export class CollectionService {
       databasePage.workspaceId,
     );
     await this.collectionRowRepo.softDelete(opts.rowId);
+
+    return { success: true };
+  }
+
+  async createView(opts: {
+    user: User;
+    collectionPageId: string;
+    type: string;
+    name: string;
+  }): Promise<CollectionView> {
+    if (!(ALLOWED_VIEW_TYPES as readonly string[]).includes(opts.type)) {
+      // [V1] Only 'table' is supported; 'kanban' etc. are V2.
+      throw new BadRequestException(`Invalid view type: ${opts.type}`);
+    }
+
+    const page = await this.pageRepo.findById(opts.collectionPageId);
+    if (!page || page.deletedAt) {
+      throw new NotFoundException('Page not found');
+    }
+    await this.pageAccessService.validateCanEdit(page, opts.user);
+
+    const existing = await this.collectionViewRepo.findByCollectionPageId(
+      opts.collectionPageId,
+    );
+    const lastPosition = existing.length
+      ? existing[existing.length - 1].position
+      : null;
+
+    return this.collectionViewRepo.insert({
+      collectionPageId: opts.collectionPageId,
+      name: opts.name,
+      type: opts.type,
+      position: generateJitteredKeyBetween(lastPosition, null),
+      config: {},
+      workspaceId: page.workspaceId,
+      creatorId: opts.user.id,
+    });
+  }
+
+  async updateView(opts: {
+    user: User;
+    id: string;
+    config?: object;
+    name?: string;
+    position?: string;
+  }): Promise<CollectionView> {
+    const view = await this.collectionViewRepo.findById(opts.id);
+    if (!view) {
+      throw new NotFoundException('View not found');
+    }
+
+    const page = await this.pageRepo.findById(view.collectionPageId);
+    if (!page || page.deletedAt) {
+      throw new NotFoundException('Page not found');
+    }
+    await this.pageAccessService.validateCanEdit(page, opts.user);
+
+    const patch: Partial<Pick<CollectionView, 'config' | 'name' | 'position'>> =
+      {};
+    if (opts.config !== undefined) patch.config = opts.config as any;
+    if (opts.name !== undefined) patch.name = opts.name;
+    if (opts.position !== undefined) patch.position = opts.position;
+
+    return this.collectionViewRepo.update(opts.id, patch);
+  }
+
+  async deleteView(opts: {
+    user: User;
+    id: string;
+  }): Promise<{ success: true }> {
+    const view = await this.collectionViewRepo.findById(opts.id);
+    if (!view) {
+      throw new NotFoundException('View not found');
+    }
+
+    const page = await this.pageRepo.findById(view.collectionPageId);
+    if (!page || page.deletedAt) {
+      throw new NotFoundException('Page not found');
+    }
+    await this.pageAccessService.validateCanEdit(page, opts.user);
+
+    const count = await this.collectionViewRepo.countByCollectionPageId(
+      view.collectionPageId,
+    );
+    if (count <= 1) {
+      // [R18] rendering + rows/list require a viewId; can't drop to zero.
+      throw new BadRequestException('cannot delete the only view');
+    }
+
+    await this.collectionViewRepo.delete(opts.id);
 
     return { success: true };
   }

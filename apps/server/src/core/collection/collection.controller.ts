@@ -9,6 +9,9 @@ import {
   CreateCollectionRowDto,
   UpdateCollectionRowDto,
   DeleteCollectionRowDto,
+  CreateCollectionViewDto,
+  UpdateCollectionViewDto,
+  DeleteCollectionViewDto,
 } from './dto/collection.input';
 import { AuthUser } from '../../common/decorators/auth-user.decorator';
 import { AuthWorkspace } from '../../common/decorators/auth-workspace.decorator';
@@ -120,5 +123,34 @@ export class CollectionController {
   @Post('rows/delete')
   deleteRow(@Body() dto: DeleteCollectionRowDto, @AuthUser() user: User) {
     return this.collectionService.deleteRow({ user, rowId: dto.rowId });
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('views/create')
+  createView(@Body() dto: CreateCollectionViewDto, @AuthUser() user: User) {
+    return this.collectionService.createView({
+      user,
+      collectionPageId: dto.collectionPageId,
+      type: dto.type,
+      name: dto.name,
+    });
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('views/update')
+  updateView(@Body() dto: UpdateCollectionViewDto, @AuthUser() user: User) {
+    return this.collectionService.updateView({
+      user,
+      id: dto.id,
+      config: dto.config,
+      name: dto.name,
+      position: dto.position,
+    });
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('views/delete')
+  deleteView(@Body() dto: DeleteCollectionViewDto, @AuthUser() user: User) {
+    return this.collectionService.deleteView({ user, id: dto.id });
   }
 }
