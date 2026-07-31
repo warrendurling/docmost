@@ -28,6 +28,10 @@ import { LabelRepo } from '@docmost/db/repos/label/label.repo';
 import { FavoriteRepo } from '@docmost/db/repos/favorite/favorite.repo';
 import { TemplateRepo } from '@docmost/db/repos/template/template.repo';
 import { PageListener } from '@docmost/db/listeners/page.listener';
+import { CollectionRepo } from './repos/collection/collection.repo';
+import { CollectionPropertyRepo } from './repos/collection/collection-property.repo';
+import { CollectionRowRepo } from './repos/collection/collection-row.repo';
+import { CollectionViewRepo } from './repos/collection/collection-view.repo';
 import { PostgresJSDialect } from 'kysely-postgres-js';
 import * as postgres from 'postgres';
 import { normalizePostgresUrl } from '../common/helpers';
@@ -93,6 +97,10 @@ import { normalizePostgresUrl } from '../common/helpers';
     LabelRepo,
     TemplateRepo,
     PageListener,
+    CollectionRepo,
+    CollectionPropertyRepo,
+    CollectionRowRepo,
+    CollectionViewRepo,
   ],
   exports: [
     WorkspaceRepo,
@@ -117,6 +125,10 @@ import { normalizePostgresUrl } from '../common/helpers';
     WatcherRepo,
     LabelRepo,
     TemplateRepo,
+    CollectionRepo,
+    CollectionPropertyRepo,
+    CollectionRowRepo,
+    CollectionViewRepo,
   ],
 })
 export class DatabaseModule implements OnApplicationBootstrap {
