@@ -108,6 +108,13 @@ describe('collections migration', () => {
     expect(bad.rows[0].v).toBeNull();
   });
 
+  it('collection_cell_numeric returns NULL (not a thrown overflow error) for a numeric-looking but overflowing string', async () => {
+    const result = await sql<{ v: string | null }>`
+      SELECT collection_cell_numeric('{"p":"1e300000"}'::jsonb, 'p') AS v
+    `.execute(db);
+    expect(result.rows[0].v).toBeNull();
+  });
+
   it('collection_cell_timestamptz parses valid dates and returns NULL for invalid ones', async () => {
     const ok = await sql<{ v: Date | null }>`
       SELECT collection_cell_timestamptz('{"p":"2024-01-02"}'::jsonb, 'p') AS v
@@ -119,6 +126,13 @@ describe('collections migration', () => {
       SELECT collection_cell_timestamptz('{"p":"2024-13-45"}'::jsonb, 'p') AS v
     `.execute(db);
     expect(bad.rows[0].v).toBeNull();
+  });
+
+  it('collection_cell_timestamptz is STABLE, not IMMUTABLE (result depends on session TimeZone)', async () => {
+    const result = await sql<{ provolatile: string }>`
+      SELECT provolatile FROM pg_proc WHERE proname = 'collection_cell_timestamptz'
+    `.execute(db);
+    expect(result.rows[0].provolatile).toBe('s');
   });
 
   it('collection_cell_bool extracts boolean-typed and bool-looking string values, else NULL', async () => {

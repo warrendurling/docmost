@@ -141,28 +141,37 @@ export async function up(db: Kysely<any>): Promise<void> {
     AS $$ SELECT cells->>prop::text $$
   `.execute(db);
 
+  // A numeric-looking string can still overflow PostgreSQL's numeric range
+  // (e.g. '1e300000'), which the regex can't pre-validate. plpgsql with an
+  // EXCEPTION handler returns NULL on that overflow instead of erroring the
+  // whole query; the regex is kept to avoid paying exception-handling cost
+  // on ordinary non-numeric strings.
   await sql`
     CREATE OR REPLACE FUNCTION collection_cell_numeric(cells jsonb, prop text)
-    RETURNS numeric LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+    RETURNS numeric LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE
     AS $$
-      SELECT CASE jsonb_typeof(cells->prop::text)
-        WHEN 'number' THEN (cells->>prop::text)::numeric
-        WHEN 'string' THEN
-          CASE
-            WHEN (cells->>prop::text) ~
-              '^[[:space:]]*[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][+-]?[0-9]+)?[[:space:]]*$'
-            THEN (cells->>prop::text)::numeric
-          END
-      END
+      BEGIN
+        RETURN CASE jsonb_typeof(cells->prop::text)
+          WHEN 'number' THEN (cells->>prop::text)::numeric
+          WHEN 'string' THEN
+            CASE
+              WHEN (cells->>prop::text) ~
+                '^[[:space:]]*[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][+-]?[0-9]+)?[[:space:]]*$'
+              THEN (cells->>prop::text)::numeric
+            END
+        END;
+      EXCEPTION WHEN others THEN RETURN NULL; END;
     $$
   `.execute(db);
 
   // A DATE cell stores an arbitrary string, so the cast can fail on values no
   // regex can pre-validate (e.g. '2024-13-45'). plpgsql with an EXCEPTION
   // handler returns NULL on failure instead of erroring the whole query.
+  // STABLE (not IMMUTABLE): the cast also accepts relative values like 'now'
+  // / 'tomorrow' and its result depends on the session TimeZone setting.
   await sql`
     CREATE OR REPLACE FUNCTION collection_cell_timestamptz(cells jsonb, prop text)
-    RETURNS timestamptz LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE
+    RETURNS timestamptz LANGUAGE plpgsql STABLE STRICT PARALLEL SAFE
     AS $$
       BEGIN RETURN (cells->>prop::text)::timestamptz;
       EXCEPTION WHEN others THEN RETURN NULL; END;
