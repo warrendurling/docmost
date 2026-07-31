@@ -27,6 +27,7 @@ import { CollectionViewRepo } from '@docmost/db/repos/collection/collection-view
 import { CollectionRowRepo } from '@docmost/db/repos/collection/collection-row.repo';
 import { PageRepo } from '@docmost/db/repos/page/page.repo';
 import { ShareRepo } from '@docmost/db/repos/share/share.repo';
+import { PagePermissionRepo } from '@docmost/db/repos/page/page-permission.repo';
 import { KyselyDB } from '@docmost/db/types/kysely.types';
 import { KYSELY_MODULE_CONNECTION_TOKEN } from 'nestjs-kysely';
 
@@ -75,6 +76,7 @@ describe('CollectionService (e2e)', () => {
   let collectionRowRepo: CollectionRowRepo;
   let pageRepo: PageRepo;
   let shareRepo: ShareRepo;
+  let pagePermissionRepo: PagePermissionRepo;
   let db: KyselyDB;
 
   let workspaceId: string;
@@ -95,6 +97,7 @@ describe('CollectionService (e2e)', () => {
     collectionRowRepo = moduleFixture.get(CollectionRowRepo);
     pageRepo = moduleFixture.get(PageRepo);
     shareRepo = moduleFixture.get(ShareRepo);
+    pagePermissionRepo = moduleFixture.get(PagePermissionRepo);
     db = moduleFixture.get(KYSELY_MODULE_CONNECTION_TOKEN());
 
     const workspace = await db
@@ -654,6 +657,490 @@ describe('CollectionService (e2e)', () => {
       );
       expect(all).toHaveLength(1);
       expect(all[0].id).toBe(firstView.id);
+    });
+  });
+
+  describe('rows/list', () => {
+    async function restrictPage(
+      pageId: string,
+      permittedUserId?: string,
+    ): Promise<void> {
+      const pageAccess = await pagePermissionRepo.insertPageAccess({
+        pageId,
+        workspaceId,
+        spaceId,
+        accessLevel: 'restricted',
+        creatorId: user.id,
+      });
+      if (permittedUserId) {
+        await pagePermissionRepo.insertPagePermissions([
+          {
+            pageAccessId: pageAccess.id,
+            userId: permittedUserId,
+            role: 'writer',
+            addedById: user.id,
+          } as any,
+        ]);
+      }
+    }
+
+    it('returns rows with title from page + cells; excludes a soft-deleted row and a row with a trashed page', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'RowsList Database',
+      });
+      const viewId = created.views[0].id;
+
+      const rowA = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+      await db
+        .updateTable('pages')
+        .set({ title: 'Row A' })
+        .where('id', '=', rowA.pageId)
+        .execute();
+
+      const rowB = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+      await collectionRowRepo.softDelete(rowB.id);
+
+      const rowC = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+      await db
+        .updateTable('pages')
+        .set({ deletedAt: new Date() })
+        .where('id', '=', rowC.pageId)
+        .execute();
+
+      const result = await collectionService.rowsList({
+        user: user as any,
+        collectionPageId: created.database.id,
+        viewId,
+      });
+
+      const ids = result.rows.map((r) => r.id);
+      expect(ids).toContain(rowA.id);
+      expect(ids).not.toContain(rowB.id);
+      expect(ids).not.toContain(rowC.id);
+
+      const found = result.rows.find((r) => r.id === rowA.id);
+      expect(found.title).toBe('Row A');
+      expect(found.pageId).toBe(rowA.pageId);
+      expect(found.cells).toBeDefined();
+    });
+
+    it('a text contains filter narrows results', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Filter Text Database',
+      });
+      const viewId = created.views[0].id;
+      const notesProp = await collectionService.createProperty({
+        user: user as any,
+        collectionPageId: created.database.id,
+        name: 'Notes',
+        type: 'text',
+      });
+
+      const rowMatch = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+      await collectionService.updateRow({
+        user: user as any,
+        rowId: rowMatch.id,
+        cells: { [notesProp.id]: 'contains banana here' },
+      });
+
+      const rowNoMatch = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+      await collectionService.updateRow({
+        user: user as any,
+        rowId: rowNoMatch.id,
+        cells: { [notesProp.id]: 'nothing fruity' },
+      });
+
+      await collectionService.updateView({
+        user: user as any,
+        id: viewId,
+        config: {
+          filters: [
+            { propertyId: notesProp.id, operator: 'contains', value: 'banana' },
+          ],
+        },
+      });
+
+      const result = await collectionService.rowsList({
+        user: user as any,
+        collectionPageId: created.database.id,
+        viewId,
+      });
+
+      const ids = result.rows.map((r) => r.id);
+      expect(ids).toContain(rowMatch.id);
+      expect(ids).not.toContain(rowNoMatch.id);
+    });
+
+    it('a number gt filter narrows results', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Filter Number Database',
+      });
+      const viewId = created.views[0].id;
+      const scoreProp = await collectionService.createProperty({
+        user: user as any,
+        collectionPageId: created.database.id,
+        name: 'Score',
+        type: 'number',
+      });
+
+      const high = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+      await collectionService.updateRow({
+        user: user as any,
+        rowId: high.id,
+        cells: { [scoreProp.id]: 50 },
+      });
+
+      const low = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+      await collectionService.updateRow({
+        user: user as any,
+        rowId: low.id,
+        cells: { [scoreProp.id]: 5 },
+      });
+
+      await collectionService.updateView({
+        user: user as any,
+        id: viewId,
+        config: {
+          filters: [{ propertyId: scoreProp.id, operator: 'gt', value: 10 }],
+        },
+      });
+
+      const result = await collectionService.rowsList({
+        user: user as any,
+        collectionPageId: created.database.id,
+        viewId,
+      });
+
+      const ids = result.rows.map((r) => r.id);
+      expect(ids).toContain(high.id);
+      expect(ids).not.toContain(low.id);
+    });
+
+    it('a checkbox equals:true filter narrows results', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Filter Checkbox Database',
+      });
+      const viewId = created.views[0].id;
+      const doneProp = await collectionService.createProperty({
+        user: user as any,
+        collectionPageId: created.database.id,
+        name: 'Done',
+        type: 'checkbox',
+      });
+
+      const checked = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+      await collectionService.updateRow({
+        user: user as any,
+        rowId: checked.id,
+        cells: { [doneProp.id]: true },
+      });
+
+      const unchecked = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+      await collectionService.updateRow({
+        user: user as any,
+        rowId: unchecked.id,
+        cells: { [doneProp.id]: false },
+      });
+
+      await collectionService.updateView({
+        user: user as any,
+        id: viewId,
+        config: {
+          filters: [{ propertyId: doneProp.id, operator: 'equals', value: true }],
+        },
+      });
+
+      const result = await collectionService.rowsList({
+        user: user as any,
+        collectionPageId: created.database.id,
+        viewId,
+      });
+
+      const ids = result.rows.map((r) => r.id);
+      expect(ids).toContain(checked.id);
+      expect(ids).not.toContain(unchecked.id);
+    });
+
+    it('sorts by a number cell desc', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Sort Number Database',
+      });
+      const viewId = created.views[0].id;
+      const scoreProp = await collectionService.createProperty({
+        user: user as any,
+        collectionPageId: created.database.id,
+        name: 'Score',
+        type: 'number',
+      });
+
+      const low = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+      await collectionService.updateRow({
+        user: user as any,
+        rowId: low.id,
+        cells: { [scoreProp.id]: 1 },
+      });
+      const high = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+      await collectionService.updateRow({
+        user: user as any,
+        rowId: high.id,
+        cells: { [scoreProp.id]: 99 },
+      });
+
+      await collectionService.updateView({
+        user: user as any,
+        id: viewId,
+        config: {
+          sorts: [{ propertyId: scoreProp.id, direction: 'desc' }],
+        },
+      });
+
+      const result = await collectionService.rowsList({
+        user: user as any,
+        collectionPageId: created.database.id,
+        viewId,
+      });
+
+      const ids = result.rows.map((r) => r.id);
+      expect(ids.indexOf(high.id)).toBeLessThan(ids.indexOf(low.id));
+    });
+
+    it('sorts by Title (page title)', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Sort Title Database',
+      });
+      const viewId = created.views[0].id;
+      const titleProp = created.properties[0];
+
+      const rowA = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+      await db
+        .updateTable('pages')
+        .set({ title: 'Alpha' })
+        .where('id', '=', rowA.pageId)
+        .execute();
+
+      const rowZ = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+      await db
+        .updateTable('pages')
+        .set({ title: 'Zeta' })
+        .where('id', '=', rowZ.pageId)
+        .execute();
+
+      await collectionService.updateView({
+        user: user as any,
+        id: viewId,
+        config: {
+          sorts: [{ propertyId: titleProp.id, direction: 'asc' }],
+        },
+      });
+
+      const result = await collectionService.rowsList({
+        user: user as any,
+        collectionPageId: created.database.id,
+        viewId,
+      });
+
+      const ids = result.rows.map((r) => r.id);
+      expect(ids.indexOf(rowA.id)).toBeLessThan(ids.indexOf(rowZ.id));
+    });
+
+    it('[R19] ignores a filter/sort referencing an unknown propertyId instead of crashing', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Stale Ref Database',
+      });
+      const viewId = created.views[0].id;
+
+      const row = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+
+      await collectionService.updateView({
+        user: user as any,
+        id: viewId,
+        config: {
+          filters: [
+            { propertyId: 'does-not-exist', operator: 'equals', value: 'x' },
+          ],
+          sorts: [{ propertyId: 'also-missing', direction: 'asc' }],
+        },
+      });
+
+      const result = await collectionService.rowsList({
+        user: user as any,
+        collectionPageId: created.database.id,
+        viewId,
+      });
+
+      expect(result.rows.map((r) => r.id)).toContain(row.id);
+    });
+
+    it('caps sorts at 5, ignoring extras without erroring', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Too Many Sorts Database',
+      });
+      const viewId = created.views[0].id;
+
+      const props = [];
+      for (let i = 0; i < 6; i++) {
+        const p = await collectionService.createProperty({
+          user: user as any,
+          collectionPageId: created.database.id,
+          name: `Num${i}`,
+          type: 'number',
+        });
+        props.push(p);
+      }
+
+      const row = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+
+      await collectionService.updateView({
+        user: user as any,
+        id: viewId,
+        config: {
+          sorts: props.map((p) => ({ propertyId: p.id, direction: 'asc' })),
+        },
+      });
+
+      const result = await collectionService.rowsList({
+        user: user as any,
+        collectionPageId: created.database.id,
+        viewId,
+      });
+
+      expect(result.rows.map((r) => r.id)).toContain(row.id);
+    });
+
+    it('[R6b] a user with no view access to the database THROWS on rows/list', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Restricted Database',
+      });
+      const viewId = created.views[0].id;
+
+      const outsider = await db
+        .insertInto('users')
+        .values({
+          email: `coll-outsider-${randomUUID()}@example.com`,
+          workspaceId,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      await db
+        .insertInto('spaceMembers')
+        .values({ spaceId, userId: outsider.id, role: 'reader' })
+        .execute();
+
+      // restrict the database page to only the owning `user`
+      await restrictPage(created.database.id, user.id);
+
+      await expect(
+        collectionService.rowsList({
+          user: outsider as any,
+          collectionPageId: created.database.id,
+          viewId,
+        }),
+      ).rejects.toThrow();
+    });
+
+    it('[R11] a row whose page is restricted from the caller is absent from rows/list, while an unrestricted row is present', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Row Leak Database',
+      });
+      const viewId = created.views[0].id;
+
+      const openRow = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+
+      const restrictedRow = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+      // restrict the row's page with no permission grant for anyone —
+      // including `user`, who otherwise has full access to the database.
+      await restrictPage(restrictedRow.pageId);
+
+      const result = await collectionService.rowsList({
+        user: user as any,
+        collectionPageId: created.database.id,
+        viewId,
+      });
+
+      const ids = result.rows.map((r) => r.id);
+      expect(ids).toContain(openRow.id);
+      expect(ids).not.toContain(restrictedRow.id);
     });
   });
 });

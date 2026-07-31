@@ -12,6 +12,7 @@ import {
   CreateCollectionViewDto,
   UpdateCollectionViewDto,
   DeleteCollectionViewDto,
+  RowsListDto,
 } from './dto/collection.input';
 import { AuthUser } from '../../common/decorators/auth-user.decorator';
 import { AuthWorkspace } from '../../common/decorators/auth-workspace.decorator';
@@ -123,6 +124,16 @@ export class CollectionController {
   @Post('rows/delete')
   deleteRow(@Body() dto: DeleteCollectionRowDto, @AuthUser() user: User) {
     return this.collectionService.deleteRow({ user, rowId: dto.rowId });
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('rows/list')
+  rowsList(@Body() dto: RowsListDto, @AuthUser() user: User) {
+    return this.collectionService.rowsList({
+      user,
+      collectionPageId: dto.collectionPageId,
+      viewId: dto.viewId,
+    });
   }
 
   @HttpCode(HttpStatus.OK)

@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectKysely } from 'nestjs-kysely';
+import { sql, SelectQueryBuilder } from 'kysely';
 import { generateJitteredKeyBetween } from 'fractional-indexing-jittered';
 import { KyselyDB, KyselyTransaction } from '@docmost/db/types/kysely.types';
 import { executeTx } from '@docmost/db/utils';
@@ -30,6 +31,7 @@ import {
 import { PageService } from '../page/services/page.service';
 import { CreatePageDto } from '../page/dto/create-page.dto';
 import { PageAccessService } from '../page/page-access/page-access.service';
+import { PagePermissionRepo } from '@docmost/db/repos/page/page-permission.repo';
 import SpaceAbilityFactory from '../casl/abilities/space-ability.factory';
 import {
   SpaceCaslAction,
@@ -55,6 +57,7 @@ export class CollectionService {
     private readonly collectionRowRepo: CollectionRowRepo,
     private readonly pageAccessService: PageAccessService,
     private readonly spaceAbility: SpaceAbilityFactory,
+    private readonly pagePermissionRepo: PagePermissionRepo,
   ) {}
 
   async create(opts: {
@@ -503,6 +506,231 @@ export class CollectionService {
     await this.collectionViewRepo.delete(opts.id);
 
     return { success: true };
+  }
+
+  // rows/list [R6b/R11]: two-grain access filtering — validateCanView gates
+  // the database itself, filterAccessiblePageIds gates each row (a row is a
+  // page and can carry its own restriction independent of the database's).
+  async rowsList(opts: {
+    user: User;
+    collectionPageId: string;
+    viewId: string;
+  }): Promise<{
+    rows: Array<{
+      id: string;
+      pageId: string;
+      title: string | null;
+      cells: Record<string, unknown>;
+      position: string;
+    }>;
+  }> {
+    const databasePage = await this.pageRepo.findById(opts.collectionPageId);
+    if (!databasePage || databasePage.deletedAt) {
+      throw new NotFoundException('Page not found');
+    }
+    // [R6b] a restricted database must not expose its listing to a member
+    // who can't view the database page itself.
+    await this.pageAccessService.validateCanView(databasePage, opts.user);
+
+    const view = await this.collectionViewRepo.findById(opts.viewId);
+    if (!view || view.collectionPageId !== opts.collectionPageId) {
+      throw new NotFoundException('View not found');
+    }
+
+    const properties = await this.collectionPropertyRepo.findByCollectionPageId(
+      opts.collectionPageId,
+    );
+    const propertyMap = new Map(properties.map((p) => [p.id, p]));
+
+    let query = this.db
+      .selectFrom('collectionRows as r')
+      .innerJoin('pages as p', 'p.id', 'r.pageId')
+      .select([
+        'r.id as id',
+        'r.pageId as pageId',
+        'r.cells as cells',
+        'r.position as position',
+        'p.title as title',
+      ])
+      .where('r.collectionPageId', '=', opts.collectionPageId)
+      .where('r.deletedAt', 'is', null)
+      .where('p.deletedAt', 'is', null);
+
+    const config = (view.config ?? {}) as {
+      filters?: unknown[];
+      sorts?: unknown[];
+    };
+
+    for (const filter of config.filters ?? []) {
+      query = this.applyRowFilter(query, filter, propertyMap);
+    }
+
+    // spec §10: sort cap 5
+    const sorts = (config.sorts ?? []).slice(0, 5);
+    if (sorts.length === 0) {
+      query = query.orderBy('r.position', 'asc');
+    } else {
+      for (const sort of sorts) {
+        query = this.applyRowSort(query, sort, propertyMap);
+      }
+    }
+
+    const candidates = await query.execute();
+    if (candidates.length === 0) {
+      return { rows: [] };
+    }
+
+    // [R11] a row is a page with its own possible restriction — intersect
+    // with the caller's accessible page ids or a restricted row's Title +
+    // cells leak, even though the caller can see the database itself.
+    const accessiblePageIds = await this.pagePermissionRepo.filterAccessiblePageIds(
+      {
+        pageIds: candidates.map((c) => c.pageId),
+        userId: opts.user.id,
+        spaceId: databasePage.spaceId,
+      },
+    );
+    const accessibleSet = new Set(accessiblePageIds);
+
+    // ponytail: no pagination in V1; add cursor paging when tables grow
+    return {
+      rows: candidates
+        .filter((c) => accessibleSet.has(c.pageId))
+        .map((c) => ({
+          id: c.id,
+          pageId: c.pageId,
+          title: c.title,
+          cells: (c.cells ?? {}) as Record<string, unknown>,
+          position: c.position,
+        })),
+    };
+  }
+
+  // Raw SQL fragment to read a property's value in the rows/list query.
+  // Title (isPrimary) reads from the joined page's title column; every
+  // other property type reads from collection_rows.cells via the typed
+  // extraction helper matching its type [R3].
+  private rowCellExpr(property: CollectionProperty) {
+    if (property.isPrimary) {
+      return sql.ref('p.title');
+    }
+    switch (property.type) {
+      case 'number':
+        return sql`collection_cell_numeric(r.cells, ${property.id})`;
+      case 'date':
+        return sql`collection_cell_timestamptz(r.cells, ${property.id})`;
+      case 'checkbox':
+        return sql`collection_cell_bool(r.cells, ${property.id})`;
+      case 'text':
+      case 'select':
+      default:
+        return sql`collection_cell_text(r.cells, ${property.id})`;
+    }
+  }
+
+  // Compiles one `{propertyId, operator, value}` filter condition onto the
+  // query. Unknown propertyId or an operator that doesn't apply to the
+  // property's type is skipped, never fatal [R19].
+  private applyRowFilter<QB extends SelectQueryBuilder<any, any, any>>(
+    query: QB,
+    filter: unknown,
+    propertyMap: Map<string, CollectionProperty>,
+  ): QB {
+    if (!filter || typeof filter !== 'object') return query;
+    const { propertyId, operator, value } = filter as {
+      propertyId?: string;
+      operator?: string;
+      value?: unknown;
+    };
+    const property = propertyId ? propertyMap.get(propertyId) : undefined;
+    if (!property) return query; // [R19] stale propertyId ignored
+
+    const expr = this.rowCellExpr(property);
+    const kind = property.isPrimary ? 'text' : property.type;
+
+    if (operator === 'is_empty') return query.where(expr, 'is', null) as QB;
+    if (operator === 'is_not_empty')
+      return query.where(expr, 'is not', null) as QB;
+
+    switch (kind) {
+      case 'text':
+        if (operator === 'contains') {
+          return query.where(
+            expr,
+            'ilike',
+            sql`${'%' + String(value) + '%'}`,
+          ) as QB;
+        }
+        if (operator === 'equals') {
+          return query.where(expr, '=', String(value)) as QB;
+        }
+        return query;
+      case 'select':
+        if (operator === 'equals') {
+          return query.where(expr, '=', String(value)) as QB;
+        }
+        if (operator === 'not_equals') {
+          return query.where(expr, '!=', String(value)) as QB;
+        }
+        return query;
+      case 'number': {
+        const numOps: Record<string, '=' | '!=' | '>' | '>=' | '<' | '<='> = {
+          equals: '=',
+          not_equals: '!=',
+          gt: '>',
+          gte: '>=',
+          lt: '<',
+          lte: '<=',
+        };
+        const op = operator ? numOps[operator] : undefined;
+        if (!op) return query;
+        const num = Number(value);
+        if (Number.isNaN(num)) return query;
+        return query.where(expr, op, num) as QB;
+      }
+      case 'date': {
+        if (operator === 'on') {
+          return query.where(
+            sql`date_trunc('day', ${expr})`,
+            '=',
+            sql`date_trunc('day', ${String(value)}::timestamptz)`,
+          ) as QB;
+        }
+        const dateOps: Record<string, '<' | '>'> = {
+          before: '<',
+          after: '>',
+        };
+        const op = operator ? dateOps[operator] : undefined;
+        if (!op) return query;
+        return query.where(expr, op, String(value)) as QB;
+      }
+      case 'checkbox':
+        if (operator === 'equals') {
+          return query.where(expr, '=', Boolean(value)) as QB;
+        }
+        return query;
+      default:
+        return query;
+    }
+  }
+
+  // Compiles one `{propertyId, direction}` sort onto the query. Unknown
+  // propertyId is skipped, never fatal [R19].
+  private applyRowSort<QB extends SelectQueryBuilder<any, any, any>>(
+    query: QB,
+    sortSpec: unknown,
+    propertyMap: Map<string, CollectionProperty>,
+  ): QB {
+    if (!sortSpec || typeof sortSpec !== 'object') return query;
+    const { propertyId, direction } = sortSpec as {
+      propertyId?: string;
+      direction?: string;
+    };
+    const property = propertyId ? propertyMap.get(propertyId) : undefined;
+    if (!property) return query; // [R19] stale propertyId ignored
+
+    const expr = this.rowCellExpr(property);
+    return query.orderBy(expr, direction === 'desc' ? 'desc' : 'asc') as QB;
   }
 
   // Auto-creates the Title property + Table view a collection page must

@@ -116,3 +116,11 @@ export class DeleteCollectionViewDto {
   @IsString()
   id: string;
 }
+
+export class RowsListDto {
+  @IsString()
+  collectionPageId: string;
+
+  @IsString()
+  viewId: string;
+}
