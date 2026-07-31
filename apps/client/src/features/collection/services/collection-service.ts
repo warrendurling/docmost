@@ -41,6 +41,7 @@ export interface ICollectionRow {
   id: string;
   pageId: string;
   title: string;
+  slugId: string;
   cells: Record<string, any>;
   position: string;
 }

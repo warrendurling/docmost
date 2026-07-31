@@ -178,6 +178,7 @@ function PageContent({ pageSlug }: { pageSlug: string | undefined }) {
             collectionPageId={page.id}
             viewId={firstViewId}
             readOnly={!canEdit}
+            spaceSlug={page.space?.slug}
           />
         )}
       </div>

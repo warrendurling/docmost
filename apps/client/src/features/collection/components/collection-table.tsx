@@ -9,7 +9,8 @@ import {
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useQueryClient } from "@tanstack/react-query";
 import { ActionIcon, Button, Loader, Text } from "@mantine/core";
-import { IconPlus, IconTrash } from "@tabler/icons-react";
+import { IconArrowsDiagonal, IconPlus, IconTrash } from "@tabler/icons-react";
+import { useNavigate } from "react-router-dom";
 import { combine } from "@atlaskit/pragmatic-drag-and-drop/combine";
 import {
   draggable,
@@ -32,11 +33,13 @@ import { EditableCell } from "@/features/collection/components/cell-editors/edit
 import { ColumnHeaderMenu } from "@/features/collection/components/column-header-menu";
 import { reorderColumns } from "@/features/collection/components/reorder-columns";
 import { FilterSortBar } from "@/features/collection/components/filter-sort-bar";
+import { buildPageUrl } from "@/features/page/page.utils";
 
 interface CollectionTableProps {
   collectionPageId: string;
   viewId: string;
   readOnly?: boolean;
+  spaceSlug?: string;
 }
 
 const ROW_HEIGHT = 36;
@@ -117,7 +120,9 @@ export function CollectionTable({
   collectionPageId,
   viewId,
   readOnly = false,
+  spaceSlug,
 }: CollectionTableProps) {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { data: info, isLoading: infoLoading } =
     useCollectionInfoQuery(collectionPageId);
@@ -144,6 +149,10 @@ export function CollectionTable({
 
   const handleAddRow = () => {
     createRowMutation.mutate({ collectionPageId });
+  };
+
+  const handleOpenRow = (row: ICollectionRow) => {
+    navigate(buildPageUrl(spaceSlug, row.slugId, row.title));
   };
 
   const handleDeleteRow = (rowId: string) => {
@@ -279,6 +288,7 @@ export function CollectionTable({
               fontWeight: 600,
             }}
           >
+            <div style={{ width: 14 + 16, marginLeft: 8, flexShrink: 0 }} />
             {headerGroup.headers.map((header) => (
               <ColumnHeaderCell
                 key={header.id}
@@ -317,6 +327,19 @@ export function CollectionTable({
                   borderBottom: "1px solid var(--mantine-color-default-border)",
                 }}
               >
+                <ActionIcon
+                  variant="subtle"
+                  color="gray"
+                  size="sm"
+                  aria-label="Open row"
+                  style={{ marginLeft: 8, flexShrink: 0 }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleOpenRow(row.original);
+                  }}
+                >
+                  <IconArrowsDiagonal size={14} />
+                </ActionIcon>
                 {row.getVisibleCells().map((cell) => (
                   <div key={cell.id} style={{ flex: 1, padding: "0 12px" }}>
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}

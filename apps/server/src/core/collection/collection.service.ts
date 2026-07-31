@@ -588,6 +588,7 @@ export class CollectionService {
       id: string;
       pageId: string;
       title: string | null;
+      slugId: string;
       cells: Record<string, unknown>;
       position: string;
     }>;
@@ -620,6 +621,7 @@ export class CollectionService {
         'r.cells as cells',
         'r.position as position',
         'p.title as title',
+        'p.slugId as slugId',
       ])
       .where('r.collectionPageId', '=', opts.collectionPageId)
       .where('r.deletedAt', 'is', null)
@@ -684,6 +686,7 @@ export class CollectionService {
           id: c.id,
           pageId: c.pageId,
           title: c.title,
+          slugId: c.slugId,
           cells: (c.cells ?? {}) as Record<string, unknown>,
           position: c.position,
         })),
