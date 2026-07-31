@@ -1,0 +1,27 @@
+# Dev-only: Postgres + Redis with host ports exposed, so the app (run from
+# source via `pnpm dev`) can reach them on localhost. The main compose file
+# runs the full prebuilt app image and exposes no DB/Redis host ports.
+# ponytail: only db+redis here; app runs on host in dev.
+services:
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: docmost
+      POSTGRES_USER: docmost
+      POSTGRES_PASSWORD: STRONG_DB_PASSWORD
+    ports:
+      - "55432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql
+
+  redis:
+    image: redis:8
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "63790:6379"
+    volumes:
+      - redis_data:/data
+
+volumes:
+  db_data:
+  redis_data:
