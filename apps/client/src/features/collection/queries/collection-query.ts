@@ -40,8 +40,8 @@ export function useRowsListQuery(
 }
 
 export function useCreateRowMutation(collectionPageId: string) {
-  return useMutation<ICollectionRow, Error, void>({
-    mutationFn: () => createRow({ collectionPageId }),
+  return useMutation<ICollectionRow, Error, { collectionPageId: string }>({
+    mutationFn: (data) => createRow(data),
     onSuccess: () => {
       queryClient.invalidateQueries({
         queryKey: ["collection-rows", collectionPageId],

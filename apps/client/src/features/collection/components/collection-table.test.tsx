@@ -3,13 +3,15 @@
 // package.json exports map requires) — skip its matchers, plain
 // getByText/queryByText + .checked assertions cover the same ground.
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import { CollectionTable } from "@/features/collection/components/collection-table";
 import {
   useCollectionInfoQuery,
   useRowsListQuery,
   useUpdateRowMutation,
+  useCreateRowMutation,
+  useDeleteRowMutation,
   useCreatePropertyMutation,
   useUpdatePropertyMutation,
   useDeletePropertyMutation,
@@ -39,6 +41,8 @@ vi.mock("@/features/collection/queries/collection-query", () => ({
   useCollectionInfoQuery: vi.fn(),
   useRowsListQuery: vi.fn(),
   useUpdateRowMutation: vi.fn(),
+  useCreateRowMutation: vi.fn(),
+  useDeleteRowMutation: vi.fn(),
   useCreatePropertyMutation: vi.fn(),
   useUpdatePropertyMutation: vi.fn(),
   useDeletePropertyMutation: vi.fn(),
@@ -127,6 +131,14 @@ describe("CollectionTable", () => {
     vi.mocked(useUpdateRowMutation).mockReturnValue({
       mutate: vi.fn(),
     } as any);
+    vi.mocked(useCreateRowMutation).mockReturnValue({
+      mutate: vi.fn(),
+      isPending: false,
+    } as any);
+    vi.mocked(useDeleteRowMutation).mockReturnValue({
+      mutate: vi.fn(),
+      isPending: false,
+    } as any);
     vi.mocked(useUpdatePageMutation).mockReturnValue({
       mutate: vi.fn(),
     } as any);
@@ -168,5 +180,41 @@ describe("CollectionTable", () => {
     expect(checkboxes).toHaveLength(2);
     expect((checkboxes[0] as HTMLInputElement).checked).toBe(true);
     expect((checkboxes[1] as HTMLInputElement).checked).toBe(false);
+  });
+
+  it("calls createRow with collectionPageId when the New button is clicked", () => {
+    vi.mocked(useCollectionInfoQuery).mockReturnValue({
+      data: info,
+      isLoading: false,
+    } as any);
+    vi.mocked(useRowsListQuery).mockReturnValue({
+      data: { rows },
+      isLoading: false,
+    } as any);
+    vi.mocked(useUpdateRowMutation).mockReturnValue({ mutate: vi.fn() } as any);
+    const mockCreateMutate = vi.fn();
+    vi.mocked(useCreateRowMutation).mockReturnValue({
+      mutate: mockCreateMutate,
+      isPending: false,
+    } as any);
+    vi.mocked(useDeleteRowMutation).mockReturnValue({
+      mutate: vi.fn(),
+      isPending: false,
+    } as any);
+    vi.mocked(useUpdatePageMutation).mockReturnValue({ mutate: vi.fn() } as any);
+    vi.mocked(useCreatePropertyMutation).mockReturnValue({ mutate: vi.fn() } as any);
+    vi.mocked(useUpdatePropertyMutation).mockReturnValue({ mutate: vi.fn() } as any);
+    vi.mocked(useDeletePropertyMutation).mockReturnValue({ mutate: vi.fn() } as any);
+    vi.mocked(useUpdateViewMutation).mockReturnValue({ mutate: vi.fn() } as any);
+
+    render(
+      <MantineProvider>
+        <CollectionTable collectionPageId="page1" viewId="view1" />
+      </MantineProvider>,
+    );
+
+    fireEvent.click(screen.getByText("New"));
+
+    expect(mockCreateMutate).toHaveBeenCalledWith({ collectionPageId: "page1" });
   });
 });

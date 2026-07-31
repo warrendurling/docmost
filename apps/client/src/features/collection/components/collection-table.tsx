@@ -7,7 +7,8 @@ import {
   useReactTable,
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Loader, Text } from "@mantine/core";
+import { ActionIcon, Button, Loader, Text } from "@mantine/core";
+import { IconPlus, IconTrash } from "@tabler/icons-react";
 import { combine } from "@atlaskit/pragmatic-drag-and-drop/combine";
 import {
   draggable,
@@ -15,6 +16,8 @@ import {
 } from "@atlaskit/pragmatic-drag-and-drop/element/adapter";
 import {
   useCollectionInfoQuery,
+  useCreateRowMutation,
+  useDeleteRowMutation,
   useRowsListQuery,
   useUpdateViewMutation,
 } from "@/features/collection/queries/collection-query";
@@ -127,6 +130,19 @@ export function CollectionTable({
   );
 
   const updateViewMutation = useUpdateViewMutation(collectionPageId);
+  const createRowMutation = useCreateRowMutation(collectionPageId);
+  const deleteRowMutation = useDeleteRowMutation(collectionPageId);
+
+  const handleAddRow = () => {
+    createRowMutation.mutate({ collectionPageId });
+  };
+
+  const handleDeleteRow = (rowId: string) => {
+    if (window.confirm("Delete this row? This cannot be undone.")) {
+      deleteRowMutation.mutate({ rowId });
+    }
+  };
+
   const allPropertyIds = useMemo(
     () => (info?.properties ?? []).map((p) => p.id),
     [info?.properties],
@@ -187,14 +203,6 @@ export function CollectionTable({
     return <Loader size="sm" m="md" />;
   }
 
-  if (rows.length === 0) {
-    return (
-      <Text c="dimmed" size="sm" m="md">
-        No rows
-      </Text>
-    );
-  }
-
   const virtualItems = virtualizer.getVirtualItems();
   const totalHeight = virtualizer.getTotalSize();
   const paddingTop = virtualItems.length > 0 ? virtualItems[0].start : 0;
@@ -205,61 +213,96 @@ export function CollectionTable({
 
   return (
     <div>
-      <div style={{ display: "grid" }}>
-        {table.getHeaderGroups().map((headerGroup) => (
-          <div
-            key={headerGroup.id}
-            style={{
-              display: "flex",
-              position: "sticky",
-              top: 0,
-              zIndex: 1,
-              background: "var(--mantine-color-body)",
-              borderBottom: "1px solid var(--mantine-color-default-border)",
-              fontWeight: 600,
-            }}
-          >
-            {headerGroup.headers.map((header) => (
-              <ColumnHeaderCell
-                key={header.id}
-                header={header}
-                col={builtColumnsById.get(header.column.id)}
-                collectionPageId={collectionPageId}
-                viewId={viewId}
-                viewConfig={view?.config}
-                onReorder={handleColumnReorder}
-              />
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "flex-end",
+          padding: "6px 12px",
+        }}
+      >
+        <Button
+          size="xs"
+          variant="subtle"
+          leftSection={<IconPlus size={14} />}
+          loading={createRowMutation.isPending}
+          onClick={handleAddRow}
+        >
+          New
+        </Button>
+      </div>
+      {rows.length === 0 ? (
+        <Text c="dimmed" size="sm" m="md">
+          No rows
+        </Text>
+      ) : (
+        <>
+          <div style={{ display: "grid" }}>
+            {table.getHeaderGroups().map((headerGroup) => (
+              <div
+                key={headerGroup.id}
+                style={{
+                  display: "flex",
+                  position: "sticky",
+                  top: 0,
+                  zIndex: 1,
+                  background: "var(--mantine-color-body)",
+                  borderBottom: "1px solid var(--mantine-color-default-border)",
+                  fontWeight: 600,
+                }}
+              >
+                {headerGroup.headers.map((header) => (
+                  <ColumnHeaderCell
+                    key={header.id}
+                    header={header}
+                    col={builtColumnsById.get(header.column.id)}
+                    collectionPageId={collectionPageId}
+                    viewId={viewId}
+                    viewConfig={view?.config}
+                    onReorder={handleColumnReorder}
+                  />
+                ))}
+              </div>
             ))}
           </div>
-        ))}
-      </div>
-      <div
-        ref={scrollRef}
-        style={{ maxHeight: TABLE_MAX_HEIGHT, overflow: "auto" }}
-      >
-        <div style={{ height: paddingTop }} />
-        {virtualItems.map((virtualRow) => {
-          const row = tableRows[virtualRow.index];
-          return (
-            <div
-              key={row.id}
-              style={{
-                display: "flex",
-                height: ROW_HEIGHT,
-                alignItems: "center",
-                borderBottom: "1px solid var(--mantine-color-default-border)",
-              }}
-            >
-              {row.getVisibleCells().map((cell) => (
-                <div key={cell.id} style={{ flex: 1, padding: "0 12px" }}>
-                  {flexRender(cell.column.columnDef.cell, cell.getContext())}
+          <div
+            ref={scrollRef}
+            style={{ maxHeight: TABLE_MAX_HEIGHT, overflow: "auto" }}
+          >
+            <div style={{ height: paddingTop }} />
+            {virtualItems.map((virtualRow) => {
+              const row = tableRows[virtualRow.index];
+              return (
+                <div
+                  key={row.id}
+                  style={{
+                    display: "flex",
+                    height: ROW_HEIGHT,
+                    alignItems: "center",
+                    borderBottom: "1px solid var(--mantine-color-default-border)",
+                  }}
+                >
+                  {row.getVisibleCells().map((cell) => (
+                    <div key={cell.id} style={{ flex: 1, padding: "0 12px" }}>
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    </div>
+                  ))}
+                  <ActionIcon
+                    variant="subtle"
+                    color="gray"
+                    size="sm"
+                    aria-label="Delete row"
+                    style={{ marginRight: 8, flexShrink: 0 }}
+                    onClick={() => handleDeleteRow(row.original.id)}
+                  >
+                    <IconTrash size={14} />
+                  </ActionIcon>
                 </div>
-              ))}
-            </div>
-          );
-        })}
-        <div style={{ height: paddingBottom }} />
-      </div>
+              );
+            })}
+            <div style={{ height: paddingBottom }} />
+          </div>
+        </>
+      )}
     </div>
   );
 }
