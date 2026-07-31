@@ -1699,4 +1699,285 @@ describe('CollectionService (e2e)', () => {
       expect(ids.indexOf(rowZ.id)).toBeLessThan(ids.indexOf(rowA.id));
     });
   });
+
+  describe('row mutation cross-space guard', () => {
+    it('updateRow() and deleteRow() throw when the row page has moved to a different space than the database; a same-space row is unaffected', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Cross Space Mutation DB',
+      });
+
+      const otherSpace = await db
+        .insertInto('spaces')
+        .values({
+          name: 'Other Mutation Space',
+          slug: `coll-other-mutation-space-${randomUUID()}`,
+          workspaceId,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+
+      const movedRow = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+      // simulate the row's page having been moved to another space, same as
+      // the rows/list cross-space leak fixture above
+      await db
+        .updateTable('pages')
+        .set({ spaceId: otherSpace.id })
+        .where('id', '=', movedRow.pageId)
+        .execute();
+
+      await expect(
+        collectionService.updateRow({
+          user: user as any,
+          rowId: movedRow.id,
+          cells: {},
+        }),
+      ).rejects.toThrow();
+
+      await expect(
+        collectionService.deleteRow({
+          user: user as any,
+          rowId: movedRow.id,
+        }),
+      ).rejects.toThrow();
+
+      const dbRow = await collectionRowRepo.findById(movedRow.id);
+      expect(dbRow.deletedAt).toBeNull();
+
+      // control: a row still in the database's own space is unaffected
+      const sameSpaceRow = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+      const titlePropId = created.properties[0].id;
+      const updated = await collectionService.updateRow({
+        user: user as any,
+        rowId: sameSpaceRow.id,
+        cells: { [titlePropId]: 'Still Works' },
+      });
+      expect(updated.cells[titlePropId]).toBe('Still Works');
+
+      const result = await collectionService.deleteRow({
+        user: user as any,
+        rowId: sameSpaceRow.id,
+      });
+      expect(result.success).toBe(true);
+    });
+  });
+
+  describe('date filter timezone offset cap', () => {
+    it('a +16:00 offset date filter value does not throw rows/list (offset capped, filter skipped); a valid +05:00 offset also does not throw', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Offset Cap Database',
+      });
+      const viewId = created.views[0].id;
+      const dueProp = await collectionService.createProperty({
+        user: user as any,
+        collectionPageId: created.database.id,
+        name: 'Due',
+        type: 'date',
+      });
+      const row = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+
+      await collectionService.updateView({
+        user: user as any,
+        id: viewId,
+        config: {
+          filters: [
+            {
+              propertyId: dueProp.id,
+              operator: 'before',
+              value: '2024-01-01T12:00+16:00',
+            },
+          ],
+        },
+      });
+      await expect(
+        collectionService.rowsList({
+          user: user as any,
+          collectionPageId: created.database.id,
+          viewId,
+        }),
+      ).resolves.toBeDefined();
+
+      await collectionService.updateView({
+        user: user as any,
+        id: viewId,
+        config: {
+          filters: [
+            {
+              propertyId: dueProp.id,
+              operator: 'before',
+              value: '2024-01-01T12:00+05:00',
+            },
+          ],
+        },
+      });
+      await expect(
+        collectionService.rowsList({
+          user: user as any,
+          collectionPageId: created.database.id,
+          viewId,
+        }),
+      ).resolves.toBeDefined();
+
+      void row;
+    });
+  });
+
+  describe('date filter year 0001-0099', () => {
+    it('accepts a year-0050 date filter value and actually applies it, not treating it as invalid/skipped', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Year 50 Database',
+      });
+      const viewId = created.views[0].id;
+      const dueProp = await collectionService.createProperty({
+        user: user as any,
+        collectionPageId: created.database.id,
+        name: 'Due',
+        type: 'date',
+      });
+
+      // 2024 is after year 50 -> matches an "after 0050-01-01" filter
+      const rowMatch = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+      await collectionService.updateRow({
+        user: user as any,
+        rowId: rowMatch.id,
+        cells: { [dueProp.id]: '2024-06-01' },
+      });
+
+      // year 1 is NOT after year 50 -> excluded by the same filter
+      const rowNoMatch = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+      await collectionService.updateRow({
+        user: user as any,
+        rowId: rowNoMatch.id,
+        cells: { [dueProp.id]: '0001-06-01' },
+      });
+
+      await collectionService.updateView({
+        user: user as any,
+        id: viewId,
+        config: {
+          filters: [
+            { propertyId: dueProp.id, operator: 'after', value: '0050-01-01' },
+          ],
+        },
+      });
+
+      const result = await collectionService.rowsList({
+        user: user as any,
+        collectionPageId: created.database.id,
+        viewId,
+      });
+
+      const ids = result.rows.map((r) => r.id);
+      expect(ids).toContain(rowMatch.id);
+      expect(ids).not.toContain(rowNoMatch.id);
+    });
+  });
+
+  describe('stale sorts still order by position', () => {
+    it('a view whose only sort references a nonexistent propertyId still returns rows in position order', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Stale Sort Position Order DB',
+      });
+      const viewId = created.views[0].id;
+
+      const rowFirst = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+      // 'Z0' is a valid fractional-index key both as a stored position AND
+      // as the lower bound the next createRow()'s generateJitteredKeyBetween
+      // call reads back (matches the working pair used by the C-collation
+      // test above; an arbitrary string like 'b0' fails that library's key
+      // validation on the next insert).
+      await collectionRowRepo.update(rowFirst.id, { position: 'Z0' } as any);
+
+      const rowSecond = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+      await collectionRowRepo.update(rowSecond.id, { position: 'a0' } as any);
+
+      await collectionService.updateView({
+        user: user as any,
+        id: viewId,
+        config: {
+          sorts: [{ propertyId: 'nonexistent', direction: 'asc' }],
+        },
+      });
+
+      const result = await collectionService.rowsList({
+        user: user as any,
+        collectionPageId: created.database.id,
+        viewId,
+      });
+
+      const ids = result.rows.map((r) => r.id);
+      // C collation: 'Z' (0x5A) < 'a' (0x61) -> Z0 sorts before a0.
+      expect(ids.indexOf(rowFirst.id)).toBeLessThan(ids.indexOf(rowSecond.id));
+    });
+  });
+
+  describe('last-view delete guard survives the FOR UPDATE rewrite', () => {
+    it('with 2 views, deletes the non-last one, then rejects deleting the remaining last one', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Locked Last View Delete DB',
+      });
+      const firstView = created.views[0];
+
+      const secondView = await collectionService.createView({
+        user: user as any,
+        collectionPageId: created.database.id,
+        type: 'table',
+        name: 'Second',
+      });
+
+      const result = await collectionService.deleteView({
+        user: user as any,
+        id: secondView.id,
+      });
+      expect(result.success).toBe(true);
+
+      await expect(
+        collectionService.deleteView({
+          user: user as any,
+          id: firstView.id,
+        }),
+      ).rejects.toThrow(BadRequestException);
+
+      const all = await collectionViewRepo.findByCollectionPageId(
+        created.database.id,
+      );
+      expect(all).toHaveLength(1);
+      expect(all[0].id).toBe(firstView.id);
+    });
+  });
 });

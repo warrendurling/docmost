@@ -403,6 +403,7 @@ export class CollectionService {
     if (!rowPage || rowPage.deletedAt) {
       throw new NotFoundException('Page not found');
     }
+    await this.assertRowInDatabaseSpace(row, rowPage);
     await this.pageAccessService.validateCanEdit(rowPage, opts.user);
 
     return this.collectionRowRepo.patchCells(
@@ -410,6 +411,26 @@ export class CollectionService {
       opts.cells,
       opts.user.id,
     );
+  }
+
+  // A row page moved to another space (movePageToSpace has no isCollectionRow
+  // guard yet) keeps its collection_rows link, so its ancestor chain no longer
+  // reaches the database and an editor in the NEW space would pass
+  // validateCanEdit and read/overwrite the row's cells. Mirror the rows/list
+  // space predicate on the mutation path: the row page must still live in the
+  // database's space.
+  private async assertRowInDatabaseSpace(
+    row: CollectionRow,
+    rowPage: Page,
+  ): Promise<void> {
+    const databasePage = await this.pageRepo.findById(row.collectionPageId);
+    if (
+      !databasePage ||
+      databasePage.deletedAt ||
+      rowPage.spaceId !== databasePage.spaceId
+    ) {
+      throw new NotFoundException('Row not found');
+    }
   }
 
   async deleteRow(opts: {
@@ -427,6 +448,7 @@ export class CollectionService {
     if (!rowPage || rowPage.deletedAt) {
       throw new NotFoundException('Page not found');
     }
+    await this.assertRowInDatabaseSpace(row, rowPage);
     await this.pageAccessService.validateCanEdit(rowPage, opts.user);
 
     // ponytail: PageRepo.removePage manages its own internal transaction
@@ -627,15 +649,15 @@ export class CollectionService {
       0,
       5,
     );
-    if (sorts.length === 0) {
-      // fractional-index keys need bytewise ("C") ordering — default collation
-      // misorders appended keys (e.g. 'aa' before 'aA').
-      query = query.orderBy(sql`r.position collate "C"`, 'asc');
-    } else {
-      for (const sort of sorts) {
-        query = this.applyRowSort(query, sort, propertyMap);
-      }
+    for (const sort of sorts) {
+      query = this.applyRowSort(query, sort, propertyMap);
     }
+    // Always append position as the final ordering — it's the tiebreaker for
+    // configured sorts AND the sole order when sorts is empty or every entry
+    // was a stale propertyId (applyRowSort skips those, which would otherwise
+    // leave rows in unspecified DB order). Fractional-index keys need bytewise
+    // ("C") ordering — default collation misorders appended keys ('aa' < 'aA').
+    query = query.orderBy(sql`r.position collate "C"`, 'asc');
 
     const candidates = await query.execute();
     if (candidates.length === 0) {
@@ -706,12 +728,23 @@ export class CollectionService {
     const year = Number(match[1]);
     const month = Number(match[2]);
     const day = Number(match[3]);
-    const roundTrip = new Date(Date.UTC(year, month - 1, day));
+    // setUTCFullYear (not Date.UTC directly) so years 0001–0099 aren't remapped
+    // to 1900–1999 and wrongly rejected.
+    const roundTrip = new Date(Date.UTC(2000, month - 1, day));
+    roundTrip.setUTCFullYear(year);
     if (
       roundTrip.getUTCFullYear() !== year ||
       roundTrip.getUTCMonth() !== month - 1 ||
       roundTrip.getUTCDate() !== day
     ) {
+      return false;
+    }
+
+    // Postgres rejects a timezone displacement ≥ 16:00, but the regex allows up
+    // to 99:99 — cap the offset hour at 15 (max valid is ±15:59) so such a
+    // value skips the filter instead of 500-ing the cast.
+    const offset = match[7];
+    if (offset && offset !== 'Z' && Number(offset.slice(1, 3)) > 15) {
       return false;
     }
 

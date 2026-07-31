@@ -84,24 +84,34 @@ export class CollectionViewRepo {
     await db.deleteFrom('collectionViews').where('id', '=', id).execute();
   }
 
-  // [fix D] Deletes `id` only if it isn't the last view of its collection —
-  // the "more than 1 view exists" check is a subquery inside the DELETE
-  // itself (one statement), closing the count-then-delete TOCTOU that a
-  // separate SELECT-then-DELETE has. Returns the number of rows actually
-  // deleted (0 means the guard blocked it — caller decides how to report).
+  // [fix D] Deletes `id` only if it isn't the last view of its collection.
+  // A count-then-delete (even a count subquery inside the DELETE) is NOT
+  // race-free under READ COMMITTED: two concurrent statements each snapshot
+  // count=2 and delete different rows, leaving zero views. So lock all sibling
+  // views of the collection FOR UPDATE first — the second transaction blocks
+  // until the first commits, then re-reads the now-reduced count and refuses.
+  // Returns the number of rows actually deleted (0 = guard blocked it).
   async deleteIfNotLast(
     id: string,
     collectionPageId: string,
     trx?: KyselyTransaction,
   ): Promise<number> {
-    const db = dbOrTx(this.db, trx);
-    const result = await db
-      .deleteFrom('collectionViews')
-      .where('id', '=', id)
-      .where(
-        sql<boolean>`(select count(*) from collection_views where collection_page_id = ${collectionPageId}) > 1`,
-      )
-      .executeTakeFirst();
-    return Number(result.numDeletedRows);
+    const run = async (t: KyselyDB | KyselyTransaction): Promise<number> => {
+      const siblings = await t
+        .selectFrom('collectionViews')
+        .select('id')
+        .where('collectionPageId', '=', collectionPageId)
+        .forUpdate()
+        .execute();
+      if (siblings.length <= 1) return 0;
+      const result = await t
+        .deleteFrom('collectionViews')
+        .where('id', '=', id)
+        .executeTakeFirst();
+      return Number(result.numDeletedRows);
+    };
+    // Reuse an outer transaction if given; otherwise open one so the FOR UPDATE
+    // lock is held for the count+delete.
+    return trx ? run(trx) : this.db.transaction().execute(run);
   }
 }
