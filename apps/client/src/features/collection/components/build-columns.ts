@@ -37,11 +37,14 @@ export function buildColumns(
     // append any properties not mentioned in columnOrder, in position order
     const remaining = properties
       .filter((p) => !seen.has(p.id))
-      .sort((a, b) => a.position.localeCompare(b.position));
+      .sort((a, b) => (a.position < b.position ? -1 : a.position > b.position ? 1 : 0));
     ordered = ordered.concat(remaining);
   } else {
+    // bytewise compare: matches server's `position collate "C"` ordering.
+    // localeCompare would sort case-differing fractional-index keys wrong
+    // (e.g. locale: ['aa','aA'], bytewise: ['aA','aa']).
     ordered = [...properties].sort((a, b) =>
-      a.position.localeCompare(b.position),
+      a.position < b.position ? -1 : a.position > b.position ? 1 : 0,
     );
   }
 

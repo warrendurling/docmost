@@ -1,4 +1,5 @@
 import { ActionIcon, Menu } from "@mantine/core";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   IconChevronDown,
   IconPencil,
@@ -16,6 +17,7 @@ import {
 import {
   CollectionPropertyType,
   CreatablePropertyType,
+  ICollectionInfo,
   ICollectionView,
 } from "@/features/collection/services/collection-service";
 
@@ -32,6 +34,7 @@ interface ColumnHeaderMenuProps {
   viewId: string;
   viewConfig: ICollectionView["config"];
   property: { id: string; name: string; type: CollectionPropertyType };
+  readOnly?: boolean;
 }
 
 export function ColumnHeaderMenu({
@@ -39,10 +42,12 @@ export function ColumnHeaderMenu({
   viewId,
   viewConfig,
   property,
+  readOnly = false,
 }: ColumnHeaderMenuProps) {
   // Primary (title) column can't be renamed, deleted, or type-changed [R9/R10].
   const isPrimary = property.type === "title";
 
+  const queryClient = useQueryClient();
   const updateProperty = useUpdatePropertyMutation(collectionPageId);
   const deleteProperty = useDeletePropertyMutation(collectionPageId);
   const createProperty = useCreatePropertyMutation(collectionPageId);
@@ -67,11 +72,26 @@ export function ColumnHeaderMenu({
   };
 
   const handleSort = (direction: "asc" | "desc") => {
+    // ponytail: read the freshest cached config instead of the render-captured
+    // viewConfig prop to narrow (not close) the stale-write race with other
+    // concurrent config edits (e.g. column reorder). Full fix = optimistic
+    // cache updates.
+    const freshConfig = queryClient.getQueryData<ICollectionInfo>([
+      "collection-info",
+      collectionPageId,
+    ])?.views.find((v) => v.id === viewId)?.config;
     updateView.mutate({
       id: viewId,
-      config: { ...viewConfig, sorts: [{ propertyId: property.id, direction }] },
+      config: {
+        ...(freshConfig ?? viewConfig),
+        sorts: [{ propertyId: property.id, direction }],
+      },
     });
   };
+
+  if (readOnly) {
+    return null;
+  }
 
   return (
     <Menu withinPortal position="bottom-end" shadow="md">

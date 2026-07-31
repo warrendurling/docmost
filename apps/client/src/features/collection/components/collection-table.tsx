@@ -7,6 +7,7 @@ import {
   useReactTable,
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { useQueryClient } from "@tanstack/react-query";
 import { ActionIcon, Button, Loader, Text } from "@mantine/core";
 import { IconPlus, IconTrash } from "@tabler/icons-react";
 import { combine } from "@atlaskit/pragmatic-drag-and-drop/combine";
@@ -22,6 +23,7 @@ import {
   useUpdateViewMutation,
 } from "@/features/collection/queries/collection-query";
 import {
+  ICollectionInfo,
   ICollectionRow,
   ICollectionView,
 } from "@/features/collection/services/collection-service";
@@ -34,6 +36,7 @@ import { FilterSortBar } from "@/features/collection/components/filter-sort-bar"
 interface CollectionTableProps {
   collectionPageId: string;
   viewId: string;
+  readOnly?: boolean;
 }
 
 const ROW_HEIGHT = 36;
@@ -47,6 +50,7 @@ function ColumnHeaderCell({
   viewId,
   viewConfig,
   onReorder,
+  readOnly,
 }: {
   header: Header<ICollectionRow, unknown>;
   col: IBuiltColumn | undefined;
@@ -54,6 +58,7 @@ function ColumnHeaderCell({
   viewId: string;
   viewConfig: ICollectionView["config"];
   onReorder: (fromId: string, toId: string) => void;
+  readOnly?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -101,6 +106,7 @@ function ColumnHeaderCell({
           viewId={viewId}
           viewConfig={viewConfig}
           property={{ id: col.propertyId, name: col.name, type: col.type }}
+          readOnly={readOnly}
         />
       )}
     </div>
@@ -110,7 +116,9 @@ function ColumnHeaderCell({
 export function CollectionTable({
   collectionPageId,
   viewId,
+  readOnly = false,
 }: CollectionTableProps) {
+  const queryClient = useQueryClient();
   const { data: info, isLoading: infoLoading } =
     useCollectionInfoQuery(collectionPageId);
   const { data: rowsData, isLoading: rowsLoading } = useRowsListQuery(
@@ -152,12 +160,28 @@ export function CollectionTable({
   const handleColumnReorder = useCallback(
     (fromId: string, toId: string) => {
       const newOrder = reorderColumns(columnOrder, allPropertyIds, fromId, toId);
+      // ponytail: read the freshest cached config instead of the render-captured
+      // view?.config to narrow (not close) the stale-write race with other
+      // concurrent config edits (e.g. column sort). Full fix = optimistic
+      // cache updates.
+      const freshConfig = queryClient.getQueryData<ICollectionInfo>([
+        "collection-info",
+        collectionPageId,
+      ])?.views.find((v) => v.id === viewId)?.config;
       updateViewMutation.mutate({
         id: viewId,
-        config: { ...view?.config, columnOrder: newOrder },
+        config: { ...(freshConfig ?? view?.config), columnOrder: newOrder },
       });
     },
-    [columnOrder, allPropertyIds, view?.config, viewId, updateViewMutation],
+    [
+      columnOrder,
+      allPropertyIds,
+      view?.config,
+      viewId,
+      updateViewMutation,
+      queryClient,
+      collectionPageId,
+    ],
   );
 
   const columns = useMemo<ColumnDef<ICollectionRow>[]>(
@@ -177,10 +201,11 @@ export function CollectionTable({
               position: "",
             }}
             collectionPageId={collectionPageId}
+            readOnly={readOnly}
           />
         ),
       })),
-    [builtColumns, collectionPageId],
+    [builtColumns, collectionPageId, readOnly],
   );
 
   const table = useReactTable({
@@ -219,81 +244,85 @@ export function CollectionTable({
         viewId={viewId}
         properties={info?.properties ?? []}
         viewConfig={view?.config}
+        readOnly={readOnly}
       />
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "flex-end",
-          padding: "6px 12px",
-        }}
-      >
-        <Button
-          size="xs"
-          variant="subtle"
-          leftSection={<IconPlus size={14} />}
-          loading={createRowMutation.isPending}
-          onClick={handleAddRow}
+      {!readOnly && (
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            padding: "6px 12px",
+          }}
         >
-          New
-        </Button>
+          <Button
+            size="xs"
+            variant="subtle"
+            leftSection={<IconPlus size={14} />}
+            loading={createRowMutation.isPending}
+            onClick={handleAddRow}
+          >
+            New
+          </Button>
+        </div>
+      )}
+      <div style={{ display: "grid" }}>
+        {table.getHeaderGroups().map((headerGroup) => (
+          <div
+            key={headerGroup.id}
+            style={{
+              display: "flex",
+              position: "sticky",
+              top: 0,
+              zIndex: 1,
+              background: "var(--mantine-color-body)",
+              borderBottom: "1px solid var(--mantine-color-default-border)",
+              fontWeight: 600,
+            }}
+          >
+            {headerGroup.headers.map((header) => (
+              <ColumnHeaderCell
+                key={header.id}
+                header={header}
+                col={builtColumnsById.get(header.column.id)}
+                collectionPageId={collectionPageId}
+                viewId={viewId}
+                viewConfig={view?.config}
+                onReorder={handleColumnReorder}
+                readOnly={readOnly}
+              />
+            ))}
+            <div style={{ width: 14 + 16, marginRight: 8, flexShrink: 0 }} />
+          </div>
+        ))}
       </div>
       {rows.length === 0 ? (
         <Text c="dimmed" size="sm" m="md">
           No rows
         </Text>
       ) : (
-        <>
-          <div style={{ display: "grid" }}>
-            {table.getHeaderGroups().map((headerGroup) => (
+        <div
+          ref={scrollRef}
+          style={{ maxHeight: TABLE_MAX_HEIGHT, overflow: "auto" }}
+        >
+          <div style={{ height: paddingTop }} />
+          {virtualItems.map((virtualRow) => {
+            const row = tableRows[virtualRow.index];
+            return (
               <div
-                key={headerGroup.id}
+                key={row.id}
                 style={{
                   display: "flex",
-                  position: "sticky",
-                  top: 0,
-                  zIndex: 1,
-                  background: "var(--mantine-color-body)",
+                  height: ROW_HEIGHT,
+                  alignItems: "center",
                   borderBottom: "1px solid var(--mantine-color-default-border)",
-                  fontWeight: 600,
                 }}
               >
-                {headerGroup.headers.map((header) => (
-                  <ColumnHeaderCell
-                    key={header.id}
-                    header={header}
-                    col={builtColumnsById.get(header.column.id)}
-                    collectionPageId={collectionPageId}
-                    viewId={viewId}
-                    viewConfig={view?.config}
-                    onReorder={handleColumnReorder}
-                  />
+                {row.getVisibleCells().map((cell) => (
+                  <div key={cell.id} style={{ flex: 1, padding: "0 12px" }}>
+                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                  </div>
                 ))}
-                <div style={{ width: 14 + 16, marginRight: 8, flexShrink: 0 }} />
-              </div>
-            ))}
-          </div>
-          <div
-            ref={scrollRef}
-            style={{ maxHeight: TABLE_MAX_HEIGHT, overflow: "auto" }}
-          >
-            <div style={{ height: paddingTop }} />
-            {virtualItems.map((virtualRow) => {
-              const row = tableRows[virtualRow.index];
-              return (
-                <div
-                  key={row.id}
-                  style={{
-                    display: "flex",
-                    height: ROW_HEIGHT,
-                    alignItems: "center",
-                    borderBottom: "1px solid var(--mantine-color-default-border)",
-                  }}
-                >
-                  {row.getVisibleCells().map((cell) => (
-                    <div key={cell.id} style={{ flex: 1, padding: "0 12px" }}>
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </div>
-                  ))}
+                {!readOnly && (
                   <ActionIcon
                     variant="subtle"
                     color="gray"
@@ -304,12 +333,12 @@ export function CollectionTable({
                   >
                     <IconTrash size={14} />
                   </ActionIcon>
-                </div>
-              );
-            })}
-            <div style={{ height: paddingBottom }} />
-          </div>
-        </>
+                )}
+              </div>
+            );
+          })}
+          <div style={{ height: paddingBottom }} />
+        </div>
       )}
     </div>
   );

@@ -37,4 +37,14 @@ describe("buildColumns", () => {
     });
     expect(result.map((c) => c.id)).toEqual(["p2", "p1"]);
   });
+
+  it("sorts position fallback bytewise (matches Postgres collate \"C\"), not by localeCompare", () => {
+    // localeCompare would put "aa" before "aA"; bytewise (0x41 < 0x61) puts "aA" first.
+    const caseProps: ICollectionProperty[] = [
+      { id: "p1", name: "A", type: "title", position: "aa" },
+      { id: "p2", name: "B", type: "select", position: "aA" },
+    ];
+    const result = buildColumns(caseProps, undefined);
+    expect(result.map((c) => c.id)).toEqual(["p2", "p1"]);
+  });
 });

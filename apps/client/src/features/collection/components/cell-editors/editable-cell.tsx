@@ -14,6 +14,30 @@ interface EditableCellProps {
   row: ICollectionRow;
   property: ICollectionProperty;
   collectionPageId: string;
+  readOnly?: boolean;
+}
+
+// Local value held while the date popover is open — DateInput (Mantine
+// 9.3.2) fires onChange on the first parseable keystroke (e.g. typing "2"
+// alone parses to a full date), so committing straight from onChange saves
+// garbage mid-type. Buffer locally, commit on blur/dropdown-close instead.
+function DateCellEditor({
+  initialValue,
+  onCommit,
+}: {
+  initialValue: string | null;
+  onCommit: (raw: unknown) => void;
+}) {
+  const [localValue, setLocalValue] = useState<string | null>(initialValue);
+  return (
+    <DateInput
+      autoFocus
+      size="xs"
+      value={localValue}
+      onChange={setLocalValue}
+      onBlur={() => onCommit(localValue)}
+    />
+  );
 }
 
 // Click-to-edit dispatcher for one cell. Commits on blur/Enter, cancels on
@@ -21,7 +45,7 @@ interface EditableCellProps {
 // itself (not the rows list), so we invalidate ["collection-rows", ...]
 // ourselves on success. Every other type writes through updateRow, which
 // already invalidates the rows list on its own.
-export function EditableCell({ row, property, collectionPageId }: EditableCellProps) {
+export function EditableCell({ row, property, collectionPageId, readOnly = false }: EditableCellProps) {
   const [editing, setEditing] = useState(false);
   const updateRowMutation = useUpdateRowMutation(collectionPageId);
   const updatePageMutation = useUpdatePageMutation();
@@ -50,7 +74,9 @@ export function EditableCell({ row, property, collectionPageId }: EditableCellPr
 
   if (property.type === "title") {
     if (!editing) {
-      return <span onClick={() => setEditing(true)}>{row.title}</span>;
+      return (
+        <span onClick={() => !readOnly && setEditing(true)}>{row.title}</span>
+      );
     }
     return (
       <TextInput
@@ -73,6 +99,7 @@ export function EditableCell({ row, property, collectionPageId }: EditableCellPr
       return (
         <Checkbox
           checked={!!value}
+          disabled={readOnly}
           onChange={(e) => commit(e.currentTarget.checked)}
         />
       );
@@ -82,7 +109,7 @@ export function EditableCell({ row, property, collectionPageId }: EditableCellPr
       if (!editing) {
         const choice = choices.find((c: any) => c.id === value);
         return (
-          <span onClick={() => setEditing(true)}>
+          <span onClick={() => !readOnly && setEditing(true)}>
             {choice ? <Badge color={choice.color}>{choice.name}</Badge> : ""}
           </span>
         );
@@ -107,18 +134,15 @@ export function EditableCell({ row, property, collectionPageId }: EditableCellPr
       // reintroduce the UTC-midnight drift this fixes.
       if (!editing) {
         return (
-          <span onClick={() => setEditing(true)}>
+          <span onClick={() => !readOnly && setEditing(true)}>
             {typeof value === "string" ? value : ""}
           </span>
         );
       }
       return (
-        <DateInput
-          autoFocus
-          size="xs"
-          value={typeof value === "string" ? value : null}
-          onChange={(d) => commit(d)}
-          onBlur={() => setEditing(false)}
+        <DateCellEditor
+          initialValue={typeof value === "string" ? value : null}
+          onCommit={commit}
         />
       );
     }
@@ -126,7 +150,7 @@ export function EditableCell({ row, property, collectionPageId }: EditableCellPr
     case "number":
       if (!editing) {
         return (
-          <span onClick={() => setEditing(true)}>
+          <span onClick={() => !readOnly && setEditing(true)}>
             {value === null || value === undefined ? "" : String(value)}
           </span>
         );
@@ -148,7 +172,7 @@ export function EditableCell({ row, property, collectionPageId }: EditableCellPr
     default:
       if (!editing) {
         return (
-          <span onClick={() => setEditing(true)}>
+          <span onClick={() => !readOnly && setEditing(true)}>
             {typeof value === "string" ? value : ""}
           </span>
         );

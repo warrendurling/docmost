@@ -174,7 +174,11 @@ function PageContent({ pageSlug }: { pageSlug: string | undefined }) {
         <MemoizedPageHeader readOnly={!canEdit} />
 
         {firstViewId && (
-          <CollectionTable collectionPageId={page.id} viewId={firstViewId} />
+          <CollectionTable
+            collectionPageId={page.id}
+            viewId={firstViewId}
+            readOnly={!canEdit}
+          />
         )}
       </div>
     );

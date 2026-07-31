@@ -11,6 +11,9 @@ describe("toCellValue", () => {
   it("number: non-numeric -> null", () => {
     expect(toCellValue("number", "abc")).toBeNull();
   });
+  it("number: integer beyond MAX_SAFE_INTEGER -> null (reject, don't corrupt)", () => {
+    expect(toCellValue("number", "9007199254740993")).toBeNull();
+  });
 
   it("date: valid YYYY-MM-DD passes through as-is", () => {
     expect(toCellValue("date", "2026-01-15")).toBe("2026-01-15");

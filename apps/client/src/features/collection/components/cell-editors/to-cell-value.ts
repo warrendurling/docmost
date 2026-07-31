@@ -13,7 +13,14 @@ export function toCellValue(
         return null;
       }
       const n = typeof rawInput === "number" ? rawInput : Number(rawInput);
-      return Number.isNaN(n) ? null : n;
+      if (Number.isNaN(n)) return null;
+      // ponytail: integers beyond Number.MAX_SAFE_INTEGER (2^53-1) lose
+      // precision in a JS number — no bigint pipeline here, so reject
+      // rather than silently store a corrupted value.
+      if (typeof rawInput === "string" && /^-?\d+$/.test(rawInput.trim()) && !Number.isSafeInteger(n)) {
+        return null;
+      }
+      return n;
     }
     case "date": {
       // Stored/sent as a bare 'YYYY-MM-DD' string (server's ISO_DATE_RE
