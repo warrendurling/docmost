@@ -140,6 +140,21 @@ export async function deleteRow(data: { rowId: string }) {
   return req.data;
 }
 
+export interface ICollectionRowContext {
+  collectionPageId: string;
+  rowId: string;
+  properties: ICollectionProperty[];
+  cells: Record<string, unknown>;
+  title: string;
+}
+
+export async function getRow(data: {
+  pageId: string;
+}): Promise<ICollectionRowContext> {
+  const req = await api.post<ICollectionRowContext>("/collections/rows/get", data);
+  return req.data;
+}
+
 export async function createView(data: {
   collectionPageId: string;
   type: string;
