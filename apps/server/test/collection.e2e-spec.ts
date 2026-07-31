@@ -385,6 +385,27 @@ describe('CollectionService (e2e)', () => {
       expect(all.map((p) => p.id)).not.toContain(property.id);
     });
 
+    it('[fix 3] createProperty() rejects a normal (non-collection) page', async () => {
+      const normalPage = await pageRepo.insertPage({
+        slugId: randomUUID(),
+        title: 'Normal Page Not A Collection',
+        position: 'a0',
+        spaceId,
+        creatorId: user.id,
+        workspaceId,
+        lastUpdatedById: user.id,
+      } as any);
+
+      await expect(
+        collectionService.createProperty({
+          user: user as any,
+          collectionPageId: normalPage.id,
+          name: 'Notes',
+          type: 'text',
+        }),
+      ).rejects.toThrow();
+    });
+
     it('deleteProperty() rejects deleting the primary Title property', async () => {
       const created = await collectionService.create({
         user: user as any,
@@ -898,6 +919,101 @@ describe('CollectionService (e2e)', () => {
       const ids = result.rows.map((r) => r.id);
       expect(ids).toContain(checked.id);
       expect(ids).not.toContain(unchecked.id);
+    });
+
+    it('[fix 1] an unparseable date filter value does not throw and skips the clause', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Filter Bad Date Database',
+      });
+      const viewId = created.views[0].id;
+      const dueProp = await collectionService.createProperty({
+        user: user as any,
+        collectionPageId: created.database.id,
+        name: 'Due',
+        type: 'date',
+      });
+
+      const row = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+
+      await collectionService.updateView({
+        user: user as any,
+        id: viewId,
+        config: {
+          filters: [
+            { propertyId: dueProp.id, operator: 'before', value: 'garbage' },
+          ],
+        },
+      });
+
+      const result = await collectionService.rowsList({
+        user: user as any,
+        collectionPageId: created.database.id,
+        viewId,
+      });
+
+      expect(result.rows.map((r) => r.id)).toContain(row.id);
+    });
+
+    it('[fix 2] a checkbox equals:"false" (string) filter returns unchecked rows, not everything', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Filter Checkbox String False Database',
+      });
+      const viewId = created.views[0].id;
+      const doneProp = await collectionService.createProperty({
+        user: user as any,
+        collectionPageId: created.database.id,
+        name: 'Done',
+        type: 'checkbox',
+      });
+
+      const checked = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+      await collectionService.updateRow({
+        user: user as any,
+        rowId: checked.id,
+        cells: { [doneProp.id]: true },
+      });
+
+      const unchecked = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+      await collectionService.updateRow({
+        user: user as any,
+        rowId: unchecked.id,
+        cells: { [doneProp.id]: false },
+      });
+
+      await collectionService.updateView({
+        user: user as any,
+        id: viewId,
+        config: {
+          filters: [
+            { propertyId: doneProp.id, operator: 'equals', value: 'false' },
+          ],
+        },
+      });
+
+      const result = await collectionService.rowsList({
+        user: user as any,
+        collectionPageId: created.database.id,
+        viewId,
+      });
+
+      const ids = result.rows.map((r) => r.id);
+      expect(ids).toContain(unchecked.id);
+      expect(ids).not.toContain(checked.id);
     });
 
     it('sorts by a number cell desc', async () => {

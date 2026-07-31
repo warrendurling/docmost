@@ -193,6 +193,16 @@ export class CollectionService {
     return { success: true };
   }
 
+  // Guards that a pageId is actually a collection (is_collection = true).
+  // PageRepo.findById can't be trusted for this — its baseFields omit the
+  // is_collection flags — so query via findCollectionPage.
+  private async assertCollection(pageId: string): Promise<void> {
+    const collectionPage = await this.collectionRepo.findCollectionPage(pageId);
+    if (!collectionPage) {
+      throw new NotFoundException('Not a collection database');
+    }
+  }
+
   async createProperty(opts: {
     user: User;
     collectionPageId: string;
@@ -213,6 +223,7 @@ export class CollectionService {
       throw new NotFoundException('Page not found');
     }
     await this.pageAccessService.validateCanEdit(page, opts.user);
+    await this.assertCollection(opts.collectionPageId);
 
     const existing = await this.collectionPropertyRepo.findByCollectionPageId(
       opts.collectionPageId,
@@ -325,6 +336,7 @@ export class CollectionService {
       throw new NotFoundException('Page not found');
     }
     await this.pageAccessService.validateCanEdit(databasePage, opts.user);
+    await this.assertCollection(opts.collectionPageId);
 
     return executeTx(this.db, async (trx) => {
       const rowPage = await this.pageService.create(
@@ -434,6 +446,7 @@ export class CollectionService {
       throw new NotFoundException('Page not found');
     }
     await this.pageAccessService.validateCanEdit(page, opts.user);
+    await this.assertCollection(opts.collectionPageId);
 
     const existing = await this.collectionViewRepo.findByCollectionPageId(
       opts.collectionPageId,
@@ -531,6 +544,7 @@ export class CollectionService {
     // [R6b] a restricted database must not expose its listing to a member
     // who can't view the database page itself.
     await this.pageAccessService.validateCanView(databasePage, opts.user);
+    await this.assertCollection(opts.collectionPageId);
 
     const view = await this.collectionViewRepo.findById(opts.viewId);
     if (!view || view.collectionPageId !== opts.collectionPageId) {
@@ -689,6 +703,9 @@ export class CollectionService {
         return query.where(expr, op, num) as QB;
       }
       case 'date': {
+        // [R19] never fatal: an unparseable date value would throw on the
+        // ::timestamptz cast and 500 rows/list for every viewer — skip it.
+        if (Number.isNaN(Date.parse(String(value)))) return query;
         if (operator === 'on') {
           return query.where(
             sql`date_trunc('day', ${expr})`,
@@ -706,7 +723,9 @@ export class CollectionService {
       }
       case 'checkbox':
         if (operator === 'equals') {
-          return query.where(expr, '=', Boolean(value)) as QB;
+          // explicit coercion: the JSON string "false" must not read as true
+          const boolVal = value === true || value === 'true';
+          return query.where(expr, '=', boolVal) as QB;
         }
         return query;
       default:
