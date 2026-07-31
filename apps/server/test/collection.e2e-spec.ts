@@ -605,6 +605,82 @@ describe('CollectionService (e2e)', () => {
         .executeTakeFirst();
       expect(dbRow.deletedAt).not.toBeNull();
     });
+
+    it('rows/get returns the row context by its page id', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Rows Get Database',
+      });
+      const row = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+      const titlePropId = created.properties[0].id;
+      await collectionService.updateRow({
+        user: user as any,
+        rowId: row.id,
+        cells: { [titlePropId]: 'Hello' },
+      });
+      await db
+        .updateTable('pages')
+        .set({ title: 'Row Get Title' })
+        .where('id', '=', row.pageId)
+        .execute();
+
+      const result = await collectionService.getRowByPageId({
+        user: user as any,
+        pageId: row.pageId,
+      });
+
+      expect(result.collectionPageId).toBe(created.database.id);
+      expect(result.rowId).toBe(row.id);
+      expect(result.title).toBe('Row Get Title');
+      expect(result.cells[titlePropId]).toBe('Hello');
+      expect(result.properties).toHaveLength(1);
+      expect(result.properties[0].id).toBe(titlePropId);
+    });
+
+    // Security regression guard [mirrors R11]: rows/get MUST authorize on the
+    // row's own page, not the database page. A user restricted from the row
+    // page must be denied even though the database itself is open to them.
+    it('rows/get throws for a user restricted from the row page, even though they can view the database', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Rows Get Restricted Database',
+      });
+      const row = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+
+      const outsider = await db
+        .insertInto('users')
+        .values({
+          email: `coll-rows-get-outsider-${randomUUID()}@example.com`,
+          workspaceId,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      await db
+        .insertInto('spaceMembers')
+        .values({ spaceId, userId: outsider.id, role: 'writer' })
+        .execute();
+
+      // restrict only the row's page, with no permission grant for outsider —
+      // the database page itself is left unrestricted.
+      await restrictPage(row.pageId, user.id);
+
+      await expect(
+        collectionService.getRowByPageId({
+          user: outsider as any,
+          pageId: row.pageId,
+        }),
+      ).rejects.toThrow();
+    });
   });
 
   describe('view endpoints', () => {

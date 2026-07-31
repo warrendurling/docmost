@@ -40,6 +40,7 @@ export class PageRepo {
     'isLocked',
     'isBase',
     'isCollection',
+    'isCollectionRow',
     'createdAt',
     'updatedAt',
     'deletedAt',

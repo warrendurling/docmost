@@ -466,6 +466,46 @@ export class CollectionService {
     return { success: true };
   }
 
+  // Authorize on the ROW's own page, exactly like updateRow/deleteRow — never
+  // on collectionPageId. A row is a child page that can carry its own
+  // page_access restriction independent of the database's; authorizing the
+  // database page here would let anyone who can view the database read a
+  // restricted row's title/cells [same leak class as R11/fix 1].
+  async getRowByPageId(opts: {
+    user: User;
+    pageId: string;
+  }): Promise<{
+    collectionPageId: string;
+    rowId: string;
+    properties: CollectionProperty[];
+    cells: Record<string, unknown>;
+    title: string | null;
+  }> {
+    const row = await this.collectionRowRepo.findByPageId(opts.pageId);
+    if (!row || row.deletedAt) {
+      throw new NotFoundException('Row not found');
+    }
+
+    const rowPage = await this.pageRepo.findById(row.pageId);
+    if (!rowPage || rowPage.deletedAt) {
+      throw new NotFoundException('Page not found');
+    }
+    await this.assertRowInDatabaseSpace(row, rowPage);
+    await this.pageAccessService.validateCanView(rowPage, opts.user);
+
+    const properties = await this.collectionPropertyRepo.findByCollectionPageId(
+      row.collectionPageId,
+    );
+
+    return {
+      collectionPageId: row.collectionPageId,
+      rowId: row.id,
+      properties,
+      cells: (row.cells ?? {}) as Record<string, unknown>,
+      title: rowPage.title,
+    };
+  }
+
   async createView(opts: {
     user: User;
     collectionPageId: string;
