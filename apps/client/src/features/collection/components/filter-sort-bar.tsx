@@ -42,6 +42,12 @@ const OPERATOR_LABELS: Record<string, string> = {
 
 const SORT_CAP = 5;
 
+// Local filter draft with a stable client-side identity, independent of
+// array position or propertyId/operator — see BUG 2 note above.
+type FilterDraft = FilterCondition & { _key: string };
+const withKey = (f: FilterCondition): FilterDraft => ({ ...f, _key: crypto.randomUUID() });
+const stripKey = ({ _key, ...f }: FilterDraft): FilterCondition => f;
+
 interface FilterSortBarProps {
   collectionPageId: string;
   viewId: string;
@@ -54,15 +60,22 @@ interface FilterSortBarProps {
 // all actual filtering/sorting — this only has to produce a config shape it
 // understands. See collection.service.ts applyRowFilter/applyRowSort.
 //
-// Local draft state: filter/sort rows render from localFilters/localSorts,
-// NOT straight from viewConfig — an in-progress condition (no value yet, or
-// operator/property just switched to something needing a new value) has to
-// stay visible with its input so the user can finish it. buildViewConfig
-// strips incomplete conditions before every server write; persist() is only
-// called with the current local state as its source of truth, so completed
-// conditions reach the server and incomplete ones just live in memory until
-// finished. Re-synced from viewConfig only when viewId changes, so refetches
-// after our own writes don't clobber an edit in progress.
+// Local draft state applies to FILTERS ONLY: filter rows render from
+// localFilters, NOT straight from viewConfig — an in-progress condition (no
+// value yet, or operator/property just switched to something needing a new
+// value) has to stay visible with its input so the user can finish it.
+// buildViewConfig strips incomplete conditions before every server write.
+// Re-synced from viewConfig only when viewId changes, so refetches after our
+// own writes don't clobber an edit in progress. Each local filter draft
+// carries a stable `_key` (assigned on add / on sync-from-viewConfig) used
+// as the React key, so removing one row can't make React reuse another
+// row's uncontrolled input DOM under a different filter's identity.
+//
+// Sorts have no draft state: a sort is complete the moment it's created, so
+// it renders straight from viewConfig.sorts and persists immediately on
+// every change. (A frozen local copy previously went stale whenever the
+// column-header sort menu wrote config.sorts directly — the next filter
+// edit would then persist the stale copy and silently revert the sort.)
 export function FilterSortBar({
   collectionPageId,
   viewId,
@@ -71,26 +84,28 @@ export function FilterSortBar({
   readOnly = false,
 }: FilterSortBarProps) {
   const updateView = useUpdateViewMutation(collectionPageId);
-  const [localFilters, setLocalFilters] = useState<FilterCondition[]>(
-    () => (viewConfig?.filters ?? []) as FilterCondition[],
-  );
-  const [localSorts, setLocalSorts] = useState<SortSpec[]>(
-    () => (viewConfig?.sorts ?? []) as SortSpec[],
+  const [localFilters, setLocalFilters] = useState<FilterDraft[]>(() =>
+    ((viewConfig?.filters ?? []) as FilterCondition[]).map(withKey),
   );
   useEffect(() => {
-    setLocalFilters((viewConfig?.filters ?? []) as FilterCondition[]);
-    setLocalSorts((viewConfig?.sorts ?? []) as SortSpec[]);
+    setLocalFilters(((viewConfig?.filters ?? []) as FilterCondition[]).map(withKey));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewId]);
 
   const filters = localFilters;
-  const sorts = localSorts;
+  const sorts = (viewConfig?.sorts ?? []) as SortSpec[];
   const propertyById = new Map(properties.map((p) => [p.id, p]));
 
-  const persist = (nextFilters: FilterCondition[], nextSorts: SortSpec[]) => {
+  const persistFilters = (nextFilters: FilterDraft[]) => {
     updateView.mutate({
       id: viewId,
-      config: buildViewConfig(nextFilters, nextSorts, viewConfig),
+      config: buildViewConfig(nextFilters.map(stripKey), sorts, viewConfig),
+    });
+  };
+  const persistSorts = (nextSorts: SortSpec[]) => {
+    updateView.mutate({
+      id: viewId,
+      config: buildViewConfig(filters.map(stripKey), nextSorts, viewConfig),
     });
   };
 
@@ -102,7 +117,7 @@ export function FilterSortBar({
     if (!first) return;
     setLocalFilters([
       ...filters,
-      { propertyId: first.id, operator: operatorsForType(first.type)[0] },
+      withKey({ propertyId: first.id, operator: operatorsForType(first.type)[0] }),
     ]);
   };
   // Discrete change (property/operator switch, select, checkbox, is_empty
@@ -110,7 +125,7 @@ export function FilterSortBar({
   const updateFilterAndPersist = (index: number, patch: Partial<FilterCondition>) => {
     const next = filters.map((f, i) => (i === index ? { ...f, ...patch } : f));
     setLocalFilters(next);
-    persist(next, sorts);
+    persistFilters(next);
   };
   // Draft change (value input typing): update local state only, no persist.
   const updateFilterLocal = (index: number, patch: Partial<FilterCondition>) =>
@@ -118,26 +133,20 @@ export function FilterSortBar({
   const removeFilter = (index: number) => {
     const next = filters.filter((_, i) => i !== index);
     setLocalFilters(next);
-    persist(next, sorts);
+    persistFilters(next);
   };
 
   const addSort = () => {
     if (readOnly) return;
     const first = properties[0];
     if (!first || sorts.length >= SORT_CAP) return;
-    const next = [...sorts, { propertyId: first.id, direction: "asc" as const }];
-    setLocalSorts(next);
-    persist(filters, next);
+    persistSorts([...sorts, { propertyId: first.id, direction: "asc" as const }]);
   };
   const updateSort = (index: number, patch: Partial<SortSpec>) => {
-    const next = sorts.map((s, i) => (i === index ? { ...s, ...patch } : s));
-    setLocalSorts(next);
-    persist(filters, next);
+    persistSorts(sorts.map((s, i) => (i === index ? { ...s, ...patch } : s)));
   };
   const removeSort = (index: number) => {
-    const next = sorts.filter((_, i) => i !== index);
-    setLocalSorts(next);
-    persist(filters, next);
+    persistSorts(sorts.filter((_, i) => i !== index));
   };
 
   return (
@@ -154,7 +163,7 @@ export function FilterSortBar({
               const property = propertyById.get(f.propertyId);
               const ops = property ? operatorsForType(property.type) : [];
               return (
-                <Group key={i} gap="xs" wrap="nowrap">
+                <Group key={f._key} gap="xs" wrap="nowrap">
                   <Select
                     size="xs"
                     disabled={readOnly}
