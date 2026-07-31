@@ -18,6 +18,8 @@ import { BaseView } from "@/ee/base/components/base-view";
 import { useHasFeature } from "@/ee/hooks/use-feature";
 import { Feature } from "@/ee/features";
 import { getPageTitle } from "@/features/page/page.utils";
+import { CollectionTable } from "@/features/collection/components/collection-table";
+import { useCollectionInfoQuery } from "@/features/collection/queries/collection-query";
 const MemoizedFullEditor = React.memo(FullEditor);
 const MemoizedTitleEditor = React.memo(TitleEditor);
 const MemoizedPageHeader = React.memo(PageHeader);
@@ -57,6 +59,11 @@ function PageContent({ pageSlug }: { pageSlug: string | undefined }) {
     error,
   } = usePageQuery({ pageId: extractPageSlugId(pageSlug) });
   const { data: space } = useGetSpaceBySlugQuery(page?.space?.slug);
+  // Only fetch collection info for collection pages — the hook's enabled:!!pageId
+  // guard keeps it idle when we pass "" for normal pages (avoids a 4xx per page load).
+  const { data: collectionInfo } = useCollectionInfoQuery(
+    page?.isCollection ? page.id : "",
+  );
 
   const hasBases = useHasFeature(Feature.BASES);
   const canEdit = !page?.deletedAt && (page?.permissions?.canEdit ?? false);
@@ -152,6 +159,23 @@ function PageContent({ pageSlug }: { pageSlug: string | undefined }) {
             />
           </div>
         </div>
+      </div>
+    );
+  }
+
+  if (page?.isCollection) {
+    const firstViewId = collectionInfo?.views?.[0]?.id;
+    return (
+      <div>
+        <Helmet>
+          <title>{`${page?.icon || ""}  ${getPageTitle(page?.title, page?.isBase, t)}`}</title>
+        </Helmet>
+
+        <MemoizedPageHeader readOnly={!canEdit} />
+
+        {firstViewId && (
+          <CollectionTable collectionPageId={page.id} viewId={firstViewId} />
+        )}
       </div>
     );
   }
