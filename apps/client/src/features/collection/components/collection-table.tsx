@@ -268,6 +268,7 @@ export function CollectionTable({
                     onReorder={handleColumnReorder}
                   />
                 ))}
+                <div style={{ width: 14 + 16, marginRight: 8, flexShrink: 0 }} />
               </div>
             ))}
           </div>

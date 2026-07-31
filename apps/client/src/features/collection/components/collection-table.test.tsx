@@ -5,6 +5,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { CollectionTable } from "@/features/collection/components/collection-table";
 import {
   useCollectionInfoQuery,
@@ -156,9 +157,11 @@ describe("CollectionTable", () => {
     } as any);
 
     render(
-      <MantineProvider>
-        <CollectionTable collectionPageId="page1" viewId="view1" />
-      </MantineProvider>,
+      <QueryClientProvider client={new QueryClient()}>
+        <MantineProvider>
+          <CollectionTable collectionPageId="page1" viewId="view1" />
+        </MantineProvider>
+      </QueryClientProvider>,
     );
 
     // column headers, by property name
@@ -208,9 +211,11 @@ describe("CollectionTable", () => {
     vi.mocked(useUpdateViewMutation).mockReturnValue({ mutate: vi.fn() } as any);
 
     render(
-      <MantineProvider>
-        <CollectionTable collectionPageId="page1" viewId="view1" />
-      </MantineProvider>,
+      <QueryClientProvider client={new QueryClient()}>
+        <MantineProvider>
+          <CollectionTable collectionPageId="page1" viewId="view1" />
+        </MantineProvider>
+      </QueryClientProvider>,
     );
 
     fireEvent.click(screen.getByText("New"));

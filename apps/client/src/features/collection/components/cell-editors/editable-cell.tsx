@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { TextInput, NumberInput, Select, Checkbox, Badge } from "@mantine/core";
 import { DateInput } from "@mantine/dates";
 import {
@@ -16,19 +17,30 @@ interface EditableCellProps {
 }
 
 // Click-to-edit dispatcher for one cell. Commits on blur/Enter, cancels on
-// Escape. Title writes through updatePage; every other type writes through
-// updateRow — both mutations already invalidate the rows list on success,
-// so there's no local optimistic-cache bookkeeping to do here.
+// Escape. Title writes through updatePage, which only invalidates the page
+// itself (not the rows list), so we invalidate ["collection-rows", ...]
+// ourselves on success. Every other type writes through updateRow, which
+// already invalidates the rows list on its own.
 export function EditableCell({ row, property, collectionPageId }: EditableCellProps) {
   const [editing, setEditing] = useState(false);
   const updateRowMutation = useUpdateRowMutation(collectionPageId);
   const updatePageMutation = useUpdatePageMutation();
+  const queryClient = useQueryClient();
 
   const commit = (raw: unknown) => {
     const value = toCellValue(property.type, raw);
     if (property.type === "title") {
       if (value !== row.title) {
-        updatePageMutation.mutate({ pageId: row.pageId, title: value as string });
+        updatePageMutation.mutate(
+          { pageId: row.pageId, title: value as string },
+          {
+            onSuccess: () => {
+              queryClient.invalidateQueries({
+                queryKey: ["collection-rows", collectionPageId],
+              });
+            },
+          },
+        );
       }
     } else {
       updateRowMutation.mutate({ rowId: row.id, cells: { [property.id]: value } });
