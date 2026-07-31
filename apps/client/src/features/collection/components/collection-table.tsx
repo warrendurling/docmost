@@ -29,6 +29,7 @@ import { buildColumns, IBuiltColumn } from "@/features/collection/components/bui
 import { EditableCell } from "@/features/collection/components/cell-editors/editable-cell";
 import { ColumnHeaderMenu } from "@/features/collection/components/column-header-menu";
 import { reorderColumns } from "@/features/collection/components/reorder-columns";
+import { FilterSortBar } from "@/features/collection/components/filter-sort-bar";
 
 interface CollectionTableProps {
   collectionPageId: string;
@@ -213,6 +214,12 @@ export function CollectionTable({
 
   return (
     <div>
+      <FilterSortBar
+        collectionPageId={collectionPageId}
+        viewId={viewId}
+        properties={info?.properties ?? []}
+        viewConfig={view?.config}
+      />
       <div
         style={{
           display: "flex",
