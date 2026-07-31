@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { sql } from 'kysely';
 import { InjectKysely } from 'nestjs-kysely';
 import { KyselyDB, KyselyTransaction } from '../../types/kysely.types';
 import { dbOrTx } from '../../utils';
@@ -46,7 +47,7 @@ export class CollectionViewRepo {
       .selectFrom('collectionViews')
       .selectAll()
       .where('collectionPageId', '=', collectionPageId)
-      .orderBy('position')
+      .orderBy(sql`position collate "C"`)
       .execute();
   }
 

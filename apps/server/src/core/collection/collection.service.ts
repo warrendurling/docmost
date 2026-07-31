@@ -387,11 +387,17 @@ export class CollectionService {
       throw new NotFoundException('Row not found');
     }
 
-    const databasePage = await this.pageRepo.findById(row.collectionPageId);
-    if (!databasePage || databasePage.deletedAt) {
+    // Authorize on the ROW page, not the database page: a row is a child page
+    // that can carry its own page_access restriction. validateCanEdit walks UP
+    // the ancestor chain from the page it's given, so passing the database page
+    // would never see a restriction on the row itself — letting a
+    // database-editor read (empty patch → returningAll) or overwrite a row
+    // they're locked out of.
+    const rowPage = await this.pageRepo.findById(row.pageId);
+    if (!rowPage || rowPage.deletedAt) {
       throw new NotFoundException('Page not found');
     }
-    await this.pageAccessService.validateCanEdit(databasePage, opts.user);
+    await this.pageAccessService.validateCanEdit(rowPage, opts.user);
 
     return this.collectionRowRepo.patchCells(
       opts.rowId,
@@ -409,11 +415,13 @@ export class CollectionService {
       throw new NotFoundException('Row not found');
     }
 
-    const databasePage = await this.pageRepo.findById(row.collectionPageId);
-    if (!databasePage || databasePage.deletedAt) {
+    // Authorize on the ROW page (its own restriction), not the database page —
+    // see updateRow above. A user locked out of this row must not delete it.
+    const rowPage = await this.pageRepo.findById(row.pageId);
+    if (!rowPage || rowPage.deletedAt) {
       throw new NotFoundException('Page not found');
     }
-    await this.pageAccessService.validateCanEdit(databasePage, opts.user);
+    await this.pageAccessService.validateCanEdit(rowPage, opts.user);
 
     // ponytail: PageRepo.removePage manages its own internal transaction
     // (no trx param on its signature) — matches the existing idiom in
@@ -423,7 +431,7 @@ export class CollectionService {
     await this.pageRepo.removePage(
       row.pageId,
       opts.user.id,
-      databasePage.workspaceId,
+      rowPage.workspaceId,
     );
     await this.collectionRowRepo.softDelete(opts.rowId);
 
@@ -568,7 +576,11 @@ export class CollectionService {
       ])
       .where('r.collectionPageId', '=', opts.collectionPageId)
       .where('r.deletedAt', 'is', null)
-      .where('p.deletedAt', 'is', null);
+      .where('p.deletedAt', 'is', null)
+      // defense-in-depth: a row page moved to another space (movePageToSpace
+      // leaves the collection_rows join intact) must not leak its title/cells
+      // to viewers of the database's space. V1 rows are never cross-space.
+      .where('p.spaceId', '=', databasePage.spaceId);
 
     const config = (view.config ?? {}) as {
       filters?: unknown[];
@@ -582,7 +594,9 @@ export class CollectionService {
     // spec §10: sort cap 5
     const sorts = (config.sorts ?? []).slice(0, 5);
     if (sorts.length === 0) {
-      query = query.orderBy('r.position', 'asc');
+      // fractional-index keys need bytewise ("C") ordering — default collation
+      // misorders appended keys (e.g. 'aa' before 'aA').
+      query = query.orderBy(sql`r.position collate "C"`, 'asc');
     } else {
       for (const sort of sorts) {
         query = this.applyRowSort(query, sort, propertyMap);

@@ -136,6 +136,29 @@ describe('CollectionService (e2e)', () => {
     await app.close();
   });
 
+  async function restrictPage(
+    pageId: string,
+    permittedUserId?: string,
+  ): Promise<void> {
+    const pageAccess = await pagePermissionRepo.insertPageAccess({
+      pageId,
+      workspaceId,
+      spaceId,
+      accessLevel: 'restricted',
+      creatorId: user.id,
+    });
+    if (permittedUserId) {
+      await pagePermissionRepo.insertPagePermissions([
+        {
+          pageAccessId: pageAccess.id,
+          userId: permittedUserId,
+          role: 'writer',
+          addedById: user.id,
+        } as any,
+      ]);
+    }
+  }
+
   it('create() creates a collection page + primary title property + table view', async () => {
     const result = await collectionService.create({
       user: user as any,
@@ -682,29 +705,6 @@ describe('CollectionService (e2e)', () => {
   });
 
   describe('rows/list', () => {
-    async function restrictPage(
-      pageId: string,
-      permittedUserId?: string,
-    ): Promise<void> {
-      const pageAccess = await pagePermissionRepo.insertPageAccess({
-        pageId,
-        workspaceId,
-        spaceId,
-        accessLevel: 'restricted',
-        creatorId: user.id,
-      });
-      if (permittedUserId) {
-        await pagePermissionRepo.insertPagePermissions([
-          {
-            pageAccessId: pageAccess.id,
-            userId: permittedUserId,
-            role: 'writer',
-            addedById: user.id,
-          } as any,
-        ]);
-      }
-    }
-
     it('returns rows with title from page + cells; excludes a soft-deleted row and a row with a trashed page', async () => {
       const created = await collectionService.create({
         user: user as any,
@@ -1257,6 +1257,214 @@ describe('CollectionService (e2e)', () => {
       const ids = result.rows.map((r) => r.id);
       expect(ids).toContain(openRow.id);
       expect(ids).not.toContain(restrictedRow.id);
+    });
+  });
+
+  describe('row-level auth bypass [fix 1]', () => {
+    async function createBobWithSpaceEdit(): Promise<{ id: string }> {
+      const bob = await db
+        .insertInto('users')
+        .values({
+          email: `coll-bob-${randomUUID()}@example.com`,
+          workspaceId,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      await db
+        .insertInto('spaceMembers')
+        .values({ spaceId, userId: bob.id, role: 'writer' })
+        .execute();
+      return { id: bob.id };
+    }
+
+    it('[fix 1a] updateRow() throws for a user who can edit the database but is restricted from the row page', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Row Auth Update DB',
+      });
+      const row = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+      const bob = await createBobWithSpaceEdit();
+      await restrictPage(row.pageId, user.id);
+
+      await expect(
+        collectionService.updateRow({
+          user: bob as any,
+          rowId: row.id,
+          cells: { foo: 'bar' },
+        }),
+      ).rejects.toThrow();
+    });
+
+    it('[fix 1a] deleteRow() throws for a user who can edit the database but is restricted from the row page', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Row Auth Delete DB',
+      });
+      const row = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+      const bob = await createBobWithSpaceEdit();
+      await restrictPage(row.pageId, user.id);
+
+      await expect(
+        collectionService.deleteRow({
+          user: bob as any,
+          rowId: row.id,
+        }),
+      ).rejects.toThrow();
+
+      const dbRow = await collectionRowRepo.findById(row.id);
+      expect(dbRow.deletedAt).toBeNull();
+    });
+
+    it('[fix 1b] updateRow() with an empty cells patch still throws for a restricted user, rather than returning the row', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Row Auth Read Leak DB',
+      });
+      const row = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+      await collectionService.updateRow({
+        user: user as any,
+        rowId: row.id,
+        cells: { secret: 'sensitive-value' },
+      });
+
+      const bob = await createBobWithSpaceEdit();
+      await restrictPage(row.pageId, user.id);
+
+      await expect(
+        collectionService.updateRow({
+          user: bob as any,
+          rowId: row.id,
+          cells: {},
+        }),
+      ).rejects.toThrow();
+    });
+
+    it('[fix 1c] updateRow() and deleteRow() still work for a user with permission on the restricted row page', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Row Auth Allowed DB',
+      });
+      const row = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+      // restrict the row but explicitly permit the owning `user`
+      await restrictPage(row.pageId, user.id);
+
+      const titlePropId = created.properties[0].id;
+      const updated = await collectionService.updateRow({
+        user: user as any,
+        rowId: row.id,
+        cells: { [titlePropId]: 'Still Works' },
+      });
+      expect(updated.cells[titlePropId]).toBe('Still Works');
+
+      const result = await collectionService.deleteRow({
+        user: user as any,
+        rowId: row.id,
+      });
+      expect(result.success).toBe(true);
+    });
+  });
+
+  describe('rows/list cross-space leak [fix 2]', () => {
+    it('excludes a row whose page has been moved to a different space, and still returns a same-space row', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Cross Space Leak DB',
+      });
+      const viewId = created.views[0].id;
+
+      const sameSpaceRow = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+
+      const movedRow = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+
+      const otherSpace = await db
+        .insertInto('spaces')
+        .values({
+          name: 'Other Space',
+          slug: `coll-other-space-${randomUUID()}`,
+          workspaceId,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+
+      // simulate the row's page having been moved to another space
+      await db
+        .updateTable('pages')
+        .set({ spaceId: otherSpace.id })
+        .where('id', '=', movedRow.pageId)
+        .execute();
+
+      const result = await collectionService.rowsList({
+        user: user as any,
+        collectionPageId: created.database.id,
+        viewId,
+      });
+
+      const ids = result.rows.map((r) => r.id);
+      expect(ids).toContain(sameSpaceRow.id);
+      expect(ids).not.toContain(movedRow.id);
+    });
+  });
+
+  describe('rows/list position collation [fix 3]', () => {
+    it('orders rows by C-collation position, not default collation', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'C Collation DB',
+      });
+      const viewId = created.views[0].id;
+
+      const rowZ = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+      await collectionRowRepo.update(rowZ.id, { position: 'Z0' } as any);
+
+      const rowA = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+      await collectionRowRepo.update(rowA.id, { position: 'a0' } as any);
+
+      const result = await collectionService.rowsList({
+        user: user as any,
+        collectionPageId: created.database.id,
+        viewId,
+      });
+
+      const ids = result.rows.map((r) => r.id);
+      // C collation: 'Z' (0x5A) < 'a' (0x61) → Z0 sorts before a0.
+      // Under default (en_US) collation this order is reversed.
+      expect(ids.indexOf(rowZ.id)).toBeLessThan(ids.indexOf(rowA.id));
     });
   });
 });

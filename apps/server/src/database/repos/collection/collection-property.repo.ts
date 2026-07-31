@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { sql } from 'kysely';
 import { InjectKysely } from 'nestjs-kysely';
 import { KyselyDB, KyselyTransaction } from '../../types/kysely.types';
 import { dbOrTx } from '../../utils';
@@ -48,7 +49,7 @@ export class CollectionPropertyRepo {
       .selectAll()
       .where('collectionPageId', '=', collectionPageId)
       .where('deletedAt', 'is', null)
-      .orderBy('position')
+      .orderBy(sql`position collate "C"`)
       .execute();
   }
 

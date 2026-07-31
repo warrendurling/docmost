@@ -59,7 +59,7 @@ export class CollectionRowRepo {
       .selectAll()
       .where('collectionPageId', '=', collectionPageId)
       .where('deletedAt', 'is', null)
-      .orderBy('position')
+      .orderBy(sql`position collate "C"`)
       .execute();
   }
 
