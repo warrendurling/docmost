@@ -2070,6 +2070,46 @@ describe('CollectionService (e2e)', () => {
       const movedToSpace = await pageRepo.findById(normalPage.id);
       expect(movedToSpace.spaceId).toBe(otherSpace.id);
     });
+
+    it('movePageToSpace() rejects moving a normal page with a collection database nested under it', async () => {
+      const parent = await pageRepo.insertPage({
+        slugId: randomUUID(),
+        title: 'Move Guard Nested Parent',
+        position: generateJitteredKeyBetween(null, null),
+        spaceId,
+        creatorId: user.id,
+        workspaceId,
+        lastUpdatedById: user.id,
+      } as any);
+
+      const child = await pageRepo.insertPage({
+        slugId: randomUUID(),
+        title: 'Move Guard Nested DB',
+        position: generateJitteredKeyBetween(null, null),
+        parentPageId: parent.id,
+        spaceId,
+        creatorId: user.id,
+        workspaceId,
+        lastUpdatedById: user.id,
+      } as any);
+      await collectionService.convert({ user: user as any, pageId: child.id });
+
+      const parentPage = await pageRepo.findById(parent.id);
+
+      const otherSpace = await db
+        .insertInto('spaces')
+        .values({
+          name: 'Move Guard Other Space Nested',
+          slug: `move-guard-other-space-nested-${randomUUID()}`,
+          workspaceId,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+
+      await expect(
+        pageService.movePageToSpace(parentPage, otherSpace.id, user.id),
+      ).rejects.toThrow('Collections cannot be moved to another space');
+    });
   });
 
   describe('restore guards [R5/R16/R17]', () => {
@@ -2091,6 +2131,31 @@ describe('CollectionService (e2e)', () => {
 
       const rowPage = await pageRepo.findById(row.pageId);
       expect(rowPage.deletedAt).not.toBeNull();
+
+      await expect(
+        pageService.restorePage(rowPage, workspaceId),
+      ).rejects.toThrow('Restore the database to restore its rows');
+    });
+
+    it('restorePage() rejects restoring a row page that was individually deleted via deleteRow, even though its database is still live', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Restore Guard DB Individual Row Delete',
+      });
+      const row = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+
+      await collectionService.deleteRow({ user: user as any, rowId: row.id });
+
+      const rowPage = await pageRepo.findById(row.pageId);
+      expect(rowPage.deletedAt).not.toBeNull();
+
+      const dbPage = await pageRepo.findById(created.database.id);
+      expect(dbPage.deletedAt).toBeNull();
 
       await expect(
         pageService.restorePage(rowPage, workspaceId),
@@ -2414,6 +2479,49 @@ describe('CollectionService (e2e)', () => {
       await expect(
         pageService.duplicatePage(parentPage, undefined, user as any),
       ).rejects.toThrow('Duplicating collections is not yet supported');
+    });
+
+    it('duplicatePage() does not throw when a collection database sits in a branch the caller cannot access — it is silently skipped, not disclosed', async () => {
+      const parent = await pageRepo.insertPage({
+        slugId: randomUUID(),
+        title: 'Duplicate Guard Hidden Branch Parent',
+        position: generateJitteredKeyBetween(null, null),
+        spaceId,
+        creatorId: user.id,
+        workspaceId,
+        lastUpdatedById: user.id,
+      } as any);
+
+      const hiddenChild = await pageRepo.insertPage({
+        slugId: randomUUID(),
+        title: 'Duplicate Guard Hidden DB',
+        position: generateJitteredKeyBetween(null, null),
+        parentPageId: parent.id,
+        spaceId,
+        creatorId: user.id,
+        workspaceId,
+        lastUpdatedById: user.id,
+      } as any);
+      await collectionService.convert({
+        user: user as any,
+        pageId: hiddenChild.id,
+      });
+      // restrict with no permission grant for anyone, including `user` —
+      // the acting user can no longer see this branch at all.
+      await restrictPage(hiddenChild.id);
+
+      const parentPage = await pageRepo.findById(parent.id);
+
+      const duplicated = await pageService.duplicatePage(
+        parentPage,
+        undefined,
+        user as any,
+      );
+
+      expect(duplicated.id).not.toBe(parentPage.id);
+      expect(duplicated.title).toBe(
+        'Copy of Duplicate Guard Hidden Branch Parent',
+      );
     });
 
     it('duplicatePage() still allows duplicating a plain page with no collection in its subtree [control]', async () => {
