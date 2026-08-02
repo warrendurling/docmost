@@ -22,6 +22,7 @@ import { generateSlugId } from '../../../common/helpers';
 import { getPageTitle } from '../../../common/helpers';
 import { executeTx } from '@docmost/db/utils';
 import { AttachmentRepo } from '@docmost/db/repos/attachment/attachment.repo';
+import { CollectionRowRepo } from '@docmost/db/repos/collection/collection-row.repo';
 import { v7 as uuid7 } from 'uuid';
 import {
   createYdocFromJson,
@@ -62,6 +63,7 @@ export class PageService {
 
   constructor(
     private pageRepo: PageRepo,
+    private collectionRowRepo: CollectionRowRepo,
     private pagePermissionRepo: PagePermissionRepo,
     private attachmentRepo: AttachmentRepo,
     @InjectKysely() private readonly db: KyselyDB,
@@ -1052,6 +1054,30 @@ export class PageService {
     workspaceId: string,
   ): Promise<void> {
     await this.pageRepo.removePage(pageId, userId, workspaceId);
+  }
+
+  async restorePage(page: Page, workspaceId: string): Promise<void> {
+    // [R5/R16/R17] a collection row's restore must be driven from its
+    // database — restoring the row alone while the database is still
+    // trashed would detach it to a ghost root while its collection_rows
+    // record stays soft-deleted.
+    if (page.isCollectionRow) {
+      const collectionRow = await this.collectionRowRepo.findByPageId(
+        page.id,
+      );
+      if (collectionRow) {
+        const collectionPage = await this.pageRepo.findById(
+          collectionRow.collectionPageId,
+        );
+        if (collectionPage?.deletedAt) {
+          throw new BadRequestException(
+            'Restore the database to restore its rows',
+          );
+        }
+      }
+    }
+
+    await this.pageRepo.restorePage(page.id, workspaceId);
   }
 
   private async parseProsemirrorContent(

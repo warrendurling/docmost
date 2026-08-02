@@ -2072,6 +2072,76 @@ describe('CollectionService (e2e)', () => {
     });
   });
 
+  describe('restore guards [R5/R16/R17]', () => {
+    it('restorePage() rejects restoring a collection row directly while its database is still trashed', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Restore Guard DB',
+      });
+      const row = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+
+      // trash the database page; removePage cascades to descendants,
+      // including the row page
+      await pageService.removePage(created.database.id, user.id, workspaceId);
+
+      const rowPage = await pageRepo.findById(row.pageId);
+      expect(rowPage.deletedAt).not.toBeNull();
+
+      await expect(
+        pageService.restorePage(rowPage, workspaceId),
+      ).rejects.toThrow('Restore the database to restore its rows');
+    });
+
+    it('restorePage() allows restoring a normal trashed page [control, no regression]', async () => {
+      const normalPage = await pageRepo.insertPage({
+        slugId: randomUUID(),
+        title: 'Restore Guard Normal Page',
+        position: generateJitteredKeyBetween(null, null),
+        spaceId,
+        creatorId: user.id,
+        workspaceId,
+        lastUpdatedById: user.id,
+      } as any);
+
+      await pageService.removePage(normalPage.id, user.id, workspaceId);
+      const trashedPage = await pageRepo.findById(normalPage.id);
+      expect(trashedPage.deletedAt).not.toBeNull();
+
+      await pageService.restorePage(trashedPage, workspaceId);
+
+      const restored = await pageRepo.findById(normalPage.id);
+      expect(restored.deletedAt).toBeNull();
+    });
+
+    it('restoring the database cascades to restore its row [control]', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Restore Guard DB Then Row',
+      });
+      const row = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+
+      await pageService.removePage(created.database.id, user.id, workspaceId);
+
+      const dbPage = await pageRepo.findById(created.database.id);
+      await pageService.restorePage(dbPage, workspaceId);
+
+      // restorePage cascades to descendants, so the row page comes back
+      // restored along with the database — no separate row restore needed
+      const restoredRow = await pageRepo.findById(row.pageId);
+      expect(restoredRow.deletedAt).toBeNull();
+    });
+  });
+
   describe('date filter timezone offset cap', () => {
     it('a +16:00 offset date filter value does not throw rows/list (offset capped, filter skipped); a valid +05:00 offset also does not throw', async () => {
       const created = await collectionService.create({
