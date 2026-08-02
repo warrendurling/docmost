@@ -2352,4 +2352,89 @@ describe('CollectionService (e2e)', () => {
       expect(all[0].id).toBe(firstView.id);
     });
   });
+
+  describe('duplicate guards', () => {
+    it('duplicatePage() rejects duplicating a collection database page', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Duplicate Guard DB',
+      });
+      const dbPage = await pageRepo.findById(created.database.id);
+
+      await expect(
+        pageService.duplicatePage(dbPage, undefined, user as any),
+      ).rejects.toThrow('Duplicating collections is not yet supported');
+    });
+
+    it('duplicatePage() rejects duplicating a collection row page', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Duplicate Guard DB Row',
+      });
+      const row = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+      const rowPage = await pageRepo.findById(row.pageId);
+
+      await expect(
+        pageService.duplicatePage(rowPage, undefined, user as any),
+      ).rejects.toThrow('Duplicating collections is not yet supported');
+    });
+
+    it('duplicatePage() rejects duplicating a normal page that has a collection database nested under it', async () => {
+      const parent = await pageRepo.insertPage({
+        slugId: randomUUID(),
+        title: 'Duplicate Guard Nested Parent',
+        position: generateJitteredKeyBetween(null, null),
+        spaceId,
+        creatorId: user.id,
+        workspaceId,
+        lastUpdatedById: user.id,
+      } as any);
+
+      const child = await pageRepo.insertPage({
+        slugId: randomUUID(),
+        title: 'Duplicate Guard Nested DB',
+        position: generateJitteredKeyBetween(null, null),
+        parentPageId: parent.id,
+        spaceId,
+        creatorId: user.id,
+        workspaceId,
+        lastUpdatedById: user.id,
+      } as any);
+      await collectionService.convert({ user: user as any, pageId: child.id });
+
+      const parentPage = await pageRepo.findById(parent.id);
+
+      await expect(
+        pageService.duplicatePage(parentPage, undefined, user as any),
+      ).rejects.toThrow('Duplicating collections is not yet supported');
+    });
+
+    it('duplicatePage() still allows duplicating a plain page with no collection in its subtree [control]', async () => {
+      const normalPage = await pageRepo.insertPage({
+        slugId: randomUUID(),
+        title: 'Duplicate Guard Normal Page',
+        position: generateJitteredKeyBetween(null, null),
+        spaceId,
+        creatorId: user.id,
+        workspaceId,
+        lastUpdatedById: user.id,
+      } as any);
+
+      const duplicated = await pageService.duplicatePage(
+        normalPage,
+        undefined,
+        user as any,
+      );
+
+      expect(duplicated.id).not.toBe(normalPage.id);
+      expect(duplicated.title).toBe('Copy of Duplicate Guard Normal Page');
+    });
+  });
 });

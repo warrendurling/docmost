@@ -537,6 +537,17 @@ export class PageService {
       includeContent: true,
     });
 
+    if (
+      allPages.some(
+        (page) =>
+          page.isCollection || page.isCollectionRow || page.isInlineCollection,
+      )
+    ) {
+      throw new BadRequestException(
+        'Duplicating collections is not yet supported',
+      );
+    }
+
     // Filter to only accessible pages while maintaining tree integrity
     const pages = await this.filterAccessibleTreePages(
       allPages,
