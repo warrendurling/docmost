@@ -2437,4 +2437,82 @@ describe('CollectionService (e2e)', () => {
       expect(duplicated.title).toBe('Copy of Duplicate Guard Normal Page');
     });
   });
+
+  describe('page tree surface exclusion [collection lifecycle guards]', () => {
+    it('getSidebarPages() lists the database page but not its row page; a normal page with a normal child still shows hasChildren + the child', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Sidebar Exclusion DB',
+      });
+      const row = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+
+      const normalParent = await pageRepo.insertPage({
+        slugId: randomUUID(),
+        title: 'Sidebar Normal Parent',
+        position: generateJitteredKeyBetween(null, null),
+        spaceId,
+        creatorId: user.id,
+        workspaceId,
+        lastUpdatedById: user.id,
+      } as any);
+      const normalChild = await pageRepo.insertPage({
+        slugId: randomUUID(),
+        title: 'Sidebar Normal Child',
+        position: generateJitteredKeyBetween(null, null),
+        parentPageId: normalParent.id,
+        spaceId,
+        creatorId: user.id,
+        workspaceId,
+        lastUpdatedById: user.id,
+      } as any);
+
+      // root-level listing: database page present, row page never at root
+      // anyway (it's parented under the database) but the exclusion must
+      // still keep the database itself visible.
+      const rootResult = await pageService.getSidebarPages(spaceId, {
+        limit: 100,
+      } as any);
+      const rootIds = rootResult.items.map((p: any) => p.id);
+      expect(rootIds).toContain(created.database.id);
+      expect(rootIds).toContain(normalParent.id);
+
+      const dbItem: any = rootResult.items.find(
+        (p: any) => p.id === created.database.id,
+      );
+      // database has only a row child -> hasChildren must be false (no
+      // empty expand chevron in the sidebar).
+      expect(dbItem.hasChildren).toBe(false);
+
+      const normalParentItem: any = rootResult.items.find(
+        (p: any) => p.id === normalParent.id,
+      );
+      expect(normalParentItem.hasChildren).toBe(true);
+
+      // child-level listing under the database: the row page must NOT appear
+      const dbChildrenResult = await pageService.getSidebarPages(
+        spaceId,
+        { limit: 100 } as any,
+        created.database.id,
+      );
+      expect(dbChildrenResult.items.map((p: any) => p.id)).not.toContain(
+        row.pageId,
+      );
+
+      // control: child-level listing under the normal parent still lists
+      // its normal child
+      const normalChildrenResult = await pageService.getSidebarPages(
+        spaceId,
+        { limit: 100 } as any,
+        normalParent.id,
+      );
+      expect(normalChildrenResult.items.map((p: any) => p.id)).toContain(
+        normalChild.id,
+      );
+    });
+  });
 });

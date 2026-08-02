@@ -162,6 +162,8 @@ export class ShareService {
           ])
           .where(isValidUUID(pageId) ? 'pages.id' : 'pages.slugId', '=', pageId)
           .where('pages.deletedAt', 'is', null)
+          .where('pages.isCollectionRow', '=', false)
+          .where('pages.isInlineCollection', '=', false)
           .unionAll(
             (union) =>
               union
@@ -185,6 +187,8 @@ export class ShareService {
                   's.createdAt',
                 ])
                 .where('p.deletedAt', 'is', null)
+                .where('p.isCollectionRow', '=', false)
+                .where('p.isInlineCollection', '=', false)
                 .where(sql`ph.share_id`, 'is', null) // stop if share found
                 .where(sql`ph.level`, '<', sql`25`), // prevent loop
           ),

@@ -485,6 +485,8 @@ export class PageRepo {
       )
       .whereRef('child.parentPageId', '=', 'pages.id')
       .where('child.deletedAt', 'is', null)
+      .where('child.isCollectionRow', '=', false)
+      .where('child.isInlineCollection', '=', false)
       .limit(1)
       .as('hasChildren');
   }

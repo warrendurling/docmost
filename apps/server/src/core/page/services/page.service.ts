@@ -311,7 +311,9 @@ export class PageService {
       ])
       .select((eb) => this.pageRepo.withHasChildren(eb))
       .where('deletedAt', 'is', null)
-      .where('spaceId', '=', spaceId);
+      .where('spaceId', '=', spaceId)
+      .where('isCollectionRow', '=', false)
+      .where('isInlineCollection', '=', false);
 
     if (pageId) {
       query = query.where('parentPageId', '=', pageId);
@@ -878,6 +880,8 @@ export class PageService {
           ])
           .where('id', '=', childPageId)
           .where('deletedAt', 'is', null)
+          .where('isCollectionRow', '=', false)
+          .where('isInlineCollection', '=', false)
           .unionAll((exp) =>
             exp
               .selectFrom('pages as p')
@@ -893,7 +897,9 @@ export class PageService {
                 'p.deletedAt',
               ])
               .innerJoin('page_ancestors as pa', 'pa.parentPageId', 'p.id')
-              .where('p.deletedAt', 'is', null),
+              .where('p.deletedAt', 'is', null)
+              .where('p.isCollectionRow', '=', false)
+              .where('p.isInlineCollection', '=', false),
           ),
       )
       .selectFrom('page_ancestors')
