@@ -48,6 +48,8 @@ export function useRowContextQuery(
     queryKey: ["collection-row", pageId],
     queryFn: () => getRow({ pageId }),
     enabled: !!pageId,
+    staleTime: 0,
+    refetchOnMount: "always",
   });
 }
 

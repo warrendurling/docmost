@@ -1846,6 +1846,63 @@ describe('CollectionService (e2e)', () => {
     });
   });
 
+  describe('row mutation re-parent guard [security]', () => {
+    it('getRowByPageId() and updateRow() throw when the row page has been moved to the space root (parentPageId=null); a still-nested row is unaffected', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Re-parent Guard DB',
+      });
+
+      const escapedRow = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+      // simulate the row's page having been moved to the space root, same as
+      // movePage would do (no guard blocks this yet — Phase 5)
+      await db
+        .updateTable('pages')
+        .set({ parentPageId: null })
+        .where('id', '=', escapedRow.pageId)
+        .execute();
+
+      await expect(
+        collectionService.getRowByPageId({
+          user: user as any,
+          pageId: escapedRow.pageId,
+        }),
+      ).rejects.toThrow();
+
+      await expect(
+        collectionService.updateRow({
+          user: user as any,
+          rowId: escapedRow.id,
+          cells: {},
+        }),
+      ).rejects.toThrow();
+
+      // control: a row still nested under the database is unaffected
+      const sameTreeRow = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+      const result = await collectionService.getRowByPageId({
+        user: user as any,
+        pageId: sameTreeRow.pageId,
+      });
+      expect(result.rowId).toBe(sameTreeRow.id);
+
+      const titlePropId = created.properties[0].id;
+      const updated = await collectionService.updateRow({
+        user: user as any,
+        rowId: sameTreeRow.id,
+        cells: { [titlePropId]: 'Still Works' },
+      });
+      expect(updated.cells[titlePropId]).toBe('Still Works');
+    });
+  });
+
   describe('date filter timezone offset cap', () => {
     it('a +16:00 offset date filter value does not throw rows/list (offset capped, filter skipped); a valid +05:00 offset also does not throw', async () => {
       const created = await collectionService.create({

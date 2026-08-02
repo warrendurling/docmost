@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Stack, Group, Text, TextInput, NumberInput, Select, Checkbox, Badge } from "@mantine/core";
 import { DateInput } from "@mantine/dates";
+import { notifications } from "@mantine/notifications";
 import { ICollectionProperty } from "@/features/collection/services/collection-service";
 import { toCellValue } from "@/features/collection/components/cell-editors/to-cell-value";
 import {
@@ -132,6 +133,10 @@ export function RowPropertiesPanel({ pageId, readOnly = false }: RowPropertiesPa
       { rowId: data.rowId, cells: { [property.id]: value } },
       {
         onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: ["collection-row", pageId] });
+        },
+        onError: () => {
+          notifications.show({ message: "Failed to update property", color: "red" });
           queryClient.invalidateQueries({ queryKey: ["collection-row", pageId] });
         },
       },

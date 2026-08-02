@@ -419,6 +419,14 @@ export class CollectionService {
   // validateCanEdit and read/overwrite the row's cells. Mirror the rows/list
   // space predicate on the mutation path: the row page must still live in the
   // database's space.
+  //
+  // A row page moved to the SPACE ROOT (movePage sets parentPageId=null; no
+  // guard blocks this yet — Phase 5) stays in the same space but drops out of
+  // the database's ancestor chain, so the access CTE no longer inherits the
+  // database's restriction. The spaceId check alone then passes for anyone
+  // who can edit/view the space, even if they can't view the database — the
+  // same leak class, just via re-parenting instead of cross-space move. Also
+  // require the row page still be parented directly under its database.
   private async assertRowInDatabaseSpace(
     row: CollectionRow,
     rowPage: Page,
@@ -427,7 +435,8 @@ export class CollectionService {
     if (
       !databasePage ||
       databasePage.deletedAt ||
-      rowPage.spaceId !== databasePage.spaceId
+      rowPage.spaceId !== databasePage.spaceId ||
+      rowPage.parentPageId !== row.collectionPageId
     ) {
       throw new NotFoundException('Row not found');
     }

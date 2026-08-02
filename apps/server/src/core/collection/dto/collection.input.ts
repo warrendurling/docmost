@@ -126,6 +126,6 @@ export class RowsListDto {
 }
 
 export class RowGetDto {
-  @IsString()
+  @IsUUID()
   pageId: string;
 }

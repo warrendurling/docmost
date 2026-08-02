@@ -196,7 +196,7 @@ function PageContent({ pageSlug }: { pageSlug: string | undefined }) {
         <MemoizedPageHeader readOnly={!canEdit} />
 
         {page.isCollectionRow && (
-          <RowPropertiesPanel pageId={page.id} readOnly={!canEdit} />
+          <RowPropertiesPanel key={page.id} pageId={page.id} readOnly={!canEdit} />
         )}
 
         <MemoizedFullEditor
