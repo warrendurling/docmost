@@ -13,6 +13,7 @@ import {
   UpdateCollectionViewDto,
   DeleteCollectionViewDto,
   RowsListDto,
+  RowGetDto,
 } from './dto/collection.input';
 import { AuthUser } from '../../common/decorators/auth-user.decorator';
 import { AuthWorkspace } from '../../common/decorators/auth-workspace.decorator';
@@ -133,6 +134,15 @@ export class CollectionController {
       user,
       collectionPageId: dto.collectionPageId,
       viewId: dto.viewId,
+    });
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('rows/get')
+  getRow(@Body() dto: RowGetDto, @AuthUser() user: User) {
+    return this.collectionService.getRowByPageId({
+      user,
+      pageId: dto.pageId,
     });
   }
 

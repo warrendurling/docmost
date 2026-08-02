@@ -7,9 +7,11 @@ import {
   deleteProperty,
   deleteRow,
   getCollectionInfo,
+  getRow,
   ICollectionInfo,
   ICollectionProperty,
   ICollectionRow,
+  ICollectionRowContext,
   ICollectionView,
   listRows,
   updateProperty,
@@ -36,6 +38,18 @@ export function useRowsListQuery(
     queryKey: ["collection-rows", collectionPageId, viewId],
     queryFn: () => listRows({ collectionPageId, viewId }),
     enabled: !!collectionPageId && !!viewId,
+  });
+}
+
+export function useRowContextQuery(
+  pageId: string,
+): UseQueryResult<ICollectionRowContext, Error> {
+  return useQuery({
+    queryKey: ["collection-row", pageId],
+    queryFn: () => getRow({ pageId }),
+    enabled: !!pageId,
+    staleTime: 0,
+    refetchOnMount: "always",
   });
 }
 

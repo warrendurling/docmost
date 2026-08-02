@@ -124,3 +124,8 @@ export class RowsListDto {
   @IsString()
   viewId: string;
 }
+
+export class RowGetDto {
+  @IsUUID()
+  pageId: string;
+}

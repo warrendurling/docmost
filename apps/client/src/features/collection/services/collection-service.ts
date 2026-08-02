@@ -41,6 +41,7 @@ export interface ICollectionRow {
   id: string;
   pageId: string;
   title: string;
+  slugId: string;
   cells: Record<string, any>;
   position: string;
 }
@@ -136,6 +137,21 @@ export async function updateRow(data: {
 
 export async function deleteRow(data: { rowId: string }) {
   const req = await api.post("/collections/rows/delete", data);
+  return req.data;
+}
+
+export interface ICollectionRowContext {
+  collectionPageId: string;
+  rowId: string;
+  properties: ICollectionProperty[];
+  cells: Record<string, unknown>;
+  title: string;
+}
+
+export async function getRow(data: {
+  pageId: string;
+}): Promise<ICollectionRowContext> {
+  const req = await api.post<ICollectionRowContext>("/collections/rows/get", data);
   return req.data;
 }
 

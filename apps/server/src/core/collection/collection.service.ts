@@ -419,6 +419,14 @@ export class CollectionService {
   // validateCanEdit and read/overwrite the row's cells. Mirror the rows/list
   // space predicate on the mutation path: the row page must still live in the
   // database's space.
+  //
+  // A row page moved to the SPACE ROOT (movePage sets parentPageId=null; no
+  // guard blocks this yet — Phase 5) stays in the same space but drops out of
+  // the database's ancestor chain, so the access CTE no longer inherits the
+  // database's restriction. The spaceId check alone then passes for anyone
+  // who can edit/view the space, even if they can't view the database — the
+  // same leak class, just via re-parenting instead of cross-space move. Also
+  // require the row page still be parented directly under its database.
   private async assertRowInDatabaseSpace(
     row: CollectionRow,
     rowPage: Page,
@@ -427,7 +435,8 @@ export class CollectionService {
     if (
       !databasePage ||
       databasePage.deletedAt ||
-      rowPage.spaceId !== databasePage.spaceId
+      rowPage.spaceId !== databasePage.spaceId ||
+      rowPage.parentPageId !== row.collectionPageId
     ) {
       throw new NotFoundException('Row not found');
     }
@@ -464,6 +473,46 @@ export class CollectionService {
     await this.collectionRowRepo.softDelete(opts.rowId);
 
     return { success: true };
+  }
+
+  // Authorize on the ROW's own page, exactly like updateRow/deleteRow — never
+  // on collectionPageId. A row is a child page that can carry its own
+  // page_access restriction independent of the database's; authorizing the
+  // database page here would let anyone who can view the database read a
+  // restricted row's title/cells [same leak class as R11/fix 1].
+  async getRowByPageId(opts: {
+    user: User;
+    pageId: string;
+  }): Promise<{
+    collectionPageId: string;
+    rowId: string;
+    properties: CollectionProperty[];
+    cells: Record<string, unknown>;
+    title: string | null;
+  }> {
+    const row = await this.collectionRowRepo.findByPageId(opts.pageId);
+    if (!row || row.deletedAt) {
+      throw new NotFoundException('Row not found');
+    }
+
+    const rowPage = await this.pageRepo.findById(row.pageId);
+    if (!rowPage || rowPage.deletedAt) {
+      throw new NotFoundException('Page not found');
+    }
+    await this.assertRowInDatabaseSpace(row, rowPage);
+    await this.pageAccessService.validateCanView(rowPage, opts.user);
+
+    const properties = await this.collectionPropertyRepo.findByCollectionPageId(
+      row.collectionPageId,
+    );
+
+    return {
+      collectionPageId: row.collectionPageId,
+      rowId: row.id,
+      properties,
+      cells: (row.cells ?? {}) as Record<string, unknown>,
+      title: rowPage.title,
+    };
   }
 
   async createView(opts: {
@@ -588,6 +637,7 @@ export class CollectionService {
       id: string;
       pageId: string;
       title: string | null;
+      slugId: string;
       cells: Record<string, unknown>;
       position: string;
     }>;
@@ -620,6 +670,7 @@ export class CollectionService {
         'r.cells as cells',
         'r.position as position',
         'p.title as title',
+        'p.slugId as slugId',
       ])
       .where('r.collectionPageId', '=', opts.collectionPageId)
       .where('r.deletedAt', 'is', null)
@@ -684,6 +735,7 @@ export class CollectionService {
           id: c.id,
           pageId: c.pageId,
           title: c.title,
+          slugId: c.slugId,
           cells: (c.cells ?? {}) as Record<string, unknown>,
           position: c.position,
         })),

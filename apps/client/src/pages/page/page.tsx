@@ -19,6 +19,7 @@ import { useHasFeature } from "@/ee/hooks/use-feature";
 import { Feature } from "@/ee/features";
 import { getPageTitle } from "@/features/page/page.utils";
 import { CollectionTable } from "@/features/collection/components/collection-table";
+import { RowPropertiesPanel } from "@/features/collection/components/row-properties-panel";
 import { useCollectionInfoQuery } from "@/features/collection/queries/collection-query";
 const MemoizedFullEditor = React.memo(FullEditor);
 const MemoizedTitleEditor = React.memo(TitleEditor);
@@ -178,6 +179,7 @@ function PageContent({ pageSlug }: { pageSlug: string | undefined }) {
             collectionPageId={page.id}
             viewId={firstViewId}
             readOnly={!canEdit}
+            spaceSlug={page.space?.slug}
           />
         )}
       </div>
@@ -192,6 +194,10 @@ function PageContent({ pageSlug }: { pageSlug: string | undefined }) {
         </Helmet>
 
         <MemoizedPageHeader readOnly={!canEdit} />
+
+        {page.isCollectionRow && (
+          <RowPropertiesPanel key={page.id} pageId={page.id} readOnly={!canEdit} />
+        )}
 
         <MemoizedFullEditor
           key={page.id}

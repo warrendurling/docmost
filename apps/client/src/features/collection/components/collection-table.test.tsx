@@ -54,6 +54,14 @@ vi.mock("@/features/page/queries/page-query", () => ({
   useUpdatePageMutation: vi.fn(),
 }));
 
+const mockNavigate = vi.fn();
+vi.mock("react-router-dom", async () => {
+  const actual = await vi.importActual<typeof import("react-router-dom")>(
+    "react-router-dom",
+  );
+  return { ...actual, useNavigate: () => mockNavigate };
+});
+
 // jsdom never lays out elements, so the real virtualizer computes an
 // outerSize of 0 and renders nothing. Stub it with a trivial "render
 // everything" implementation just for this test.
@@ -101,6 +109,7 @@ const rows: ICollectionRow[] = [
     id: "row1",
     pageId: "p1",
     title: "Row One",
+    slugId: "slug1",
     cells: { prop_status: "c1", prop_active: true, prop_notes: "hello" },
     position: "a",
   },
@@ -108,6 +117,7 @@ const rows: ICollectionRow[] = [
     id: "row2",
     pageId: "p2",
     title: "Row Two",
+    slugId: "slug2",
     // select cell points at a choice id that no longer exists on the
     // property (property deleted/renamed) — should render blank, not throw.
     cells: {
@@ -221,5 +231,47 @@ describe("CollectionTable", () => {
     fireEvent.click(screen.getByText("New"));
 
     expect(mockCreateMutate).toHaveBeenCalledWith({ collectionPageId: "page1" });
+  });
+
+  it("navigates to the row's page when the open affordance is clicked", () => {
+    vi.mocked(useCollectionInfoQuery).mockReturnValue({
+      data: info,
+      isLoading: false,
+    } as any);
+    vi.mocked(useRowsListQuery).mockReturnValue({
+      data: { rows },
+      isLoading: false,
+    } as any);
+    vi.mocked(useUpdateRowMutation).mockReturnValue({ mutate: vi.fn() } as any);
+    vi.mocked(useCreateRowMutation).mockReturnValue({
+      mutate: vi.fn(),
+      isPending: false,
+    } as any);
+    vi.mocked(useDeleteRowMutation).mockReturnValue({
+      mutate: vi.fn(),
+      isPending: false,
+    } as any);
+    vi.mocked(useUpdatePageMutation).mockReturnValue({ mutate: vi.fn() } as any);
+    vi.mocked(useCreatePropertyMutation).mockReturnValue({ mutate: vi.fn() } as any);
+    vi.mocked(useUpdatePropertyMutation).mockReturnValue({ mutate: vi.fn() } as any);
+    vi.mocked(useDeletePropertyMutation).mockReturnValue({ mutate: vi.fn() } as any);
+    vi.mocked(useUpdateViewMutation).mockReturnValue({ mutate: vi.fn() } as any);
+
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MantineProvider>
+          <CollectionTable
+            collectionPageId="page1"
+            viewId="view1"
+            spaceSlug="space1"
+          />
+        </MantineProvider>
+      </QueryClientProvider>,
+    );
+
+    const openButtons = screen.getAllByLabelText("Open row");
+    fireEvent.click(openButtons[0]);
+
+    expect(mockNavigate).toHaveBeenCalledWith("/s/space1/p/row-one-slug1");
   });
 });

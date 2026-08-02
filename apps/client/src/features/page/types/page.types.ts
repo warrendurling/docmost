@@ -14,6 +14,7 @@ export interface IPage {
   isLocked: boolean;
   isBase: boolean;
   isCollection?: boolean;
+  isCollectionRow?: boolean;
   lastUpdatedById: string;
   createdAt: Date;
   updatedAt: Date;
