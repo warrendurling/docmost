@@ -22,6 +22,8 @@ import { LoggerModule } from '../src/common/logger/logger.module';
 import { NoopAuditModule } from '../src/integrations/audit/audit.module';
 import { ThrottleModule } from '../src/integrations/throttle/throttle.module';
 import { CollectionService } from '../src/core/collection/collection.service';
+import { PageService } from '../src/core/page/services/page.service';
+import { generateJitteredKeyBetween } from 'fractional-indexing-jittered';
 import { CollectionPropertyRepo } from '@docmost/db/repos/collection/collection-property.repo';
 import { CollectionViewRepo } from '@docmost/db/repos/collection/collection-view.repo';
 import { CollectionRowRepo } from '@docmost/db/repos/collection/collection-row.repo';
@@ -74,6 +76,7 @@ describe('CollectionService (e2e)', () => {
   let collectionPropertyRepo: CollectionPropertyRepo;
   let collectionViewRepo: CollectionViewRepo;
   let collectionRowRepo: CollectionRowRepo;
+  let pageService: PageService;
   let pageRepo: PageRepo;
   let shareRepo: ShareRepo;
   let pagePermissionRepo: PagePermissionRepo;
@@ -95,6 +98,7 @@ describe('CollectionService (e2e)', () => {
     collectionPropertyRepo = moduleFixture.get(CollectionPropertyRepo);
     collectionViewRepo = moduleFixture.get(CollectionViewRepo);
     collectionRowRepo = moduleFixture.get(CollectionRowRepo);
+    pageService = moduleFixture.get(PageService);
     pageRepo = moduleFixture.get(PageRepo);
     shareRepo = moduleFixture.get(ShareRepo);
     pagePermissionRepo = moduleFixture.get(PagePermissionRepo);
@@ -1900,6 +1904,171 @@ describe('CollectionService (e2e)', () => {
         cells: { [titlePropId]: 'Still Works' },
       });
       expect(updated.cells[titlePropId]).toBe('Still Works');
+    });
+  });
+
+  describe('page move guards [R6/R15]', () => {
+    it('movePage() rejects moving a collection row', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Move Guard DB',
+      });
+      const row = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+      const rowPage = await pageRepo.findById(row.pageId);
+
+      await expect(
+        pageService.movePage(
+          { pageId: rowPage.id, position: rowPage.position, parentPageId: null } as any,
+          rowPage,
+        ),
+      ).rejects.toThrow('Collection rows cannot be moved');
+    });
+
+    it('movePageToSpace() rejects moving a collection row to another space', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Move Guard DB Row Space',
+      });
+      const row = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+      const rowPage = await pageRepo.findById(row.pageId);
+
+      const otherSpace = await db
+        .insertInto('spaces')
+        .values({
+          name: 'Move Guard Other Space',
+          slug: `move-guard-other-space-${randomUUID()}`,
+          workspaceId,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+
+      await expect(
+        pageService.movePageToSpace(rowPage, otherSpace.id, user.id),
+      ).rejects.toThrow(
+        'Collections and their rows cannot be moved to another space',
+      );
+    });
+
+    it('movePageToSpace() rejects moving a database to another space', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Move Guard DB Space',
+      });
+      const dbPage = await pageRepo.findById(created.database.id);
+
+      const otherSpace = await db
+        .insertInto('spaces')
+        .values({
+          name: 'Move Guard Other Space 2',
+          slug: `move-guard-other-space-2-${randomUUID()}`,
+          workspaceId,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+
+      await expect(
+        pageService.movePageToSpace(dbPage, otherSpace.id, user.id),
+      ).rejects.toThrow(
+        'Collections and their rows cannot be moved to another space',
+      );
+    });
+
+    it('movePage() allows moving a database within its own space [control]', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Move Guard DB Reparent',
+      });
+      const dbPage = await pageRepo.findById(created.database.id);
+
+      const newParent = await pageRepo.insertPage({
+        slugId: randomUUID(),
+        title: 'Move Guard New Parent',
+        position: generateJitteredKeyBetween(null, null),
+        spaceId,
+        creatorId: user.id,
+        workspaceId,
+        lastUpdatedById: user.id,
+      } as any);
+
+      await pageService.movePage(
+        {
+          pageId: dbPage.id,
+          position: dbPage.position,
+          parentPageId: newParent.id,
+        } as any,
+        dbPage,
+      );
+
+      const moved = await pageRepo.findById(dbPage.id);
+      expect(moved.parentPageId).toBe(newParent.id);
+    });
+
+    it('movePage() and movePageToSpace() still allow moving a normal page [control, no regression]', async () => {
+      const normalPage = await pageRepo.insertPage({
+        slugId: randomUUID(),
+        title: 'Move Guard Normal Page',
+        position: generateJitteredKeyBetween(null, null),
+        spaceId,
+        creatorId: user.id,
+        workspaceId,
+        lastUpdatedById: user.id,
+      } as any);
+
+      const newParent = await pageRepo.insertPage({
+        slugId: randomUUID(),
+        title: 'Move Guard Normal Page Parent',
+        position: generateJitteredKeyBetween(null, null),
+        spaceId,
+        creatorId: user.id,
+        workspaceId,
+        lastUpdatedById: user.id,
+      } as any);
+
+      await pageService.movePage(
+        {
+          pageId: normalPage.id,
+          position: normalPage.position,
+          parentPageId: newParent.id,
+        } as any,
+        normalPage,
+      );
+
+      const reparented = await pageRepo.findById(normalPage.id);
+      expect(reparented.parentPageId).toBe(newParent.id);
+
+      const otherSpace = await db
+        .insertInto('spaces')
+        .values({
+          name: 'Move Guard Other Space 3',
+          slug: `move-guard-other-space-3-${randomUUID()}`,
+          workspaceId,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+
+      const { childPageIds } = await pageService.movePageToSpace(
+        reparented,
+        otherSpace.id,
+        user.id,
+      );
+      expect(childPageIds).toEqual([]);
+
+      const movedToSpace = await pageRepo.findById(normalPage.id);
+      expect(movedToSpace.spaceId).toBe(otherSpace.id);
     });
   });
 

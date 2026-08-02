@@ -391,6 +391,12 @@ export class PageService {
   }
 
   async movePageToSpace(rootPage: Page, spaceId: string, userId: string) {
+    if (rootPage.isCollectionRow || rootPage.isCollection) {
+      throw new BadRequestException(
+        'Collections and their rows cannot be moved to another space',
+      );
+    }
+
     let childPageIds: string[] = [];
 
     const allPages = await this.pageRepo.getPageAndDescendants(rootPage.id, {
@@ -803,6 +809,10 @@ export class PageService {
   }
 
   async movePage(dto: MovePageDto, movedPage: Page) {
+    if (movedPage.isCollectionRow) {
+      throw new BadRequestException('Collection rows cannot be moved');
+    }
+
     // validate position value by attempting to generate a key
     try {
       generateJitteredKeyBetween(dto.position, null);
