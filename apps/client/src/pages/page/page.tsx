@@ -167,21 +167,38 @@ function PageContent({ pageSlug }: { pageSlug: string | undefined }) {
   if (page?.isCollection) {
     const firstViewId = collectionInfo?.views?.[0]?.id;
     return (
-      <div>
+      <div
+        className="collection-page-root"
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          paddingTop: "calc(var(--page-header-height) + 6px)",
+        }}
+      >
         <Helmet>
           <title>{`${page?.icon || ""}  ${getPageTitle(page?.title, page?.isBase, t)}`}</title>
         </Helmet>
 
         <MemoizedPageHeader readOnly={!canEdit} />
 
-        {firstViewId && (
-          <CollectionTable
-            collectionPageId={page.id}
-            viewId={firstViewId}
-            readOnly={!canEdit}
-            spaceSlug={page.space?.slug}
-          />
-        )}
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            paddingInline: 24,
+          }}
+        >
+          {firstViewId && (
+            <CollectionTable
+              collectionPageId={page.id}
+              viewId={firstViewId}
+              readOnly={!canEdit}
+              spaceSlug={page.space?.slug}
+            />
+          )}
+        </div>
       </div>
     );
   }
@@ -196,7 +213,9 @@ function PageContent({ pageSlug }: { pageSlug: string | undefined }) {
         <MemoizedPageHeader readOnly={!canEdit} />
 
         {page.isCollectionRow && (
-          <RowPropertiesPanel key={page.id} pageId={page.id} readOnly={!canEdit} />
+          <div style={{ paddingTop: "var(--page-header-height)" }}>
+            <RowPropertiesPanel key={page.id} pageId={page.id} readOnly={!canEdit} />
+          </div>
         )}
 
         <MemoizedFullEditor

@@ -43,7 +43,6 @@ interface CollectionTableProps {
 }
 
 const ROW_HEIGHT = 36;
-const TABLE_MAX_HEIGHT = "calc(100vh - 220px)";
 const COLUMN_DRAG_TYPE = "collection-column";
 
 function ColumnHeaderCell({
@@ -247,7 +246,14 @@ export function CollectionTable({
       : 0;
 
   return (
-    <div>
+    <div
+      style={{
+        flex: 1,
+        minHeight: 0,
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
       <FilterSortBar
         collectionPageId={collectionPageId}
         viewId={viewId}
@@ -312,7 +318,7 @@ export function CollectionTable({
       ) : (
         <div
           ref={scrollRef}
-          style={{ maxHeight: TABLE_MAX_HEIGHT, overflow: "auto" }}
+          style={{ flex: 1, minHeight: 0, overflow: "auto" }}
         >
           <div style={{ height: paddingTop }} />
           {virtualItems.map((virtualRow) => {
