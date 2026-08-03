@@ -306,12 +306,14 @@
 
 /* Definite height so the inner .tableScrollport scrolls and the sticky table
  * header pins. Flow on print, else it emits a trailing blank page. */
-.base-page-root {
+.base-page-root,
+.collection-page-root {
   height: calc(100dvh - var(--app-shell-header-height, 45px));
 }
 
 @media print {
-  .base-page-root {
+  .base-page-root,
+  .collection-page-root {
     height: 100%;
   }
 }
