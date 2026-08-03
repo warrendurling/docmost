@@ -2623,4 +2623,52 @@ describe('CollectionService (e2e)', () => {
       );
     });
   });
+
+  describe('inline collection create', () => {
+    it('isInline:true creates a database as a child of the host page', async () => {
+      const hostPage = await pageRepo.insertPage({
+        slugId: randomUUID(),
+        title: 'Host Page',
+        position: 'a0',
+        spaceId,
+        creatorId: user.id,
+        workspaceId,
+        lastUpdatedById: user.id,
+      } as any);
+
+      const result = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Inline Database',
+        parentPageId: hostPage.id,
+        isInline: true,
+      });
+
+      expect(result.database.isInlineCollection).toBe(true);
+      expect(result.database.isCollection).toBe(true);
+      expect(result.database.parentPageId).toBe(hostPage.id);
+
+      const info = await collectionService.info({
+        user: user as any,
+        pageId: result.database.id,
+      });
+      expect(info.properties).toHaveLength(1);
+      expect(info.properties[0].isPrimary).toBe(true);
+      expect(info.views).toHaveLength(1);
+    });
+
+    it('control: create() without isInline is still root-level, not inline', async () => {
+      const result = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Root Database',
+      });
+
+      expect(result.database.isInlineCollection).toBe(false);
+      expect(result.database.isCollection).toBe(true);
+      expect(result.database.parentPageId).toBeNull();
+    });
+  });
 });

@@ -37,6 +37,8 @@ export class CollectionController {
       workspaceId: workspace.id,
       spaceId: dto.spaceId,
       title: dto.title,
+      parentPageId: dto.parentPageId,
+      isInline: dto.isInline,
     });
   }
 

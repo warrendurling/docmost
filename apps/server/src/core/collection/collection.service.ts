@@ -65,6 +65,8 @@ export class CollectionService {
     workspaceId: string;
     spaceId: string;
     title: string;
+    parentPageId?: string;
+    isInline?: boolean;
   }): Promise<CollectionInfo> {
     const ability = await this.spaceAbility.createForUser(
       opts.user,
@@ -74,17 +76,37 @@ export class CollectionService {
       throw new ForbiddenException();
     }
 
+    if (opts.isInline) {
+      if (!opts.parentPageId) {
+        throw new BadRequestException(
+          'parentPageId is required for an inline collection',
+        );
+      }
+      // An inline collection is a CHILD of the host page — the caller must
+      // be able to edit the host, not just create pages in the space, or a
+      // space member could embed a database under a page they can't edit.
+      const hostPage = await this.pageRepo.findById(opts.parentPageId);
+      if (!hostPage || hostPage.deletedAt) {
+        throw new NotFoundException('Parent page not found');
+      }
+      await this.pageAccessService.validateCanEdit(hostPage, opts.user);
+    }
+
     return executeTx(this.db, async (trx) => {
       const page = await this.pageService.create(
         opts.user.id,
         opts.workspaceId,
-        { spaceId: opts.spaceId, title: opts.title } as CreatePageDto,
+        {
+          spaceId: opts.spaceId,
+          title: opts.title,
+          ...(opts.isInline ? { parentPageId: opts.parentPageId } : {}),
+        } as CreatePageDto,
         trx,
       );
 
       await this.collectionRepo.setCollectionFlags(
         page.id,
-        { isCollection: true },
+        { isCollection: true, isInlineCollection: !!opts.isInline },
         trx,
       );
 
@@ -100,7 +122,7 @@ export class CollectionService {
           ...page,
           isCollection: true,
           isCollectionRow: false,
-          isInlineCollection: false,
+          isInlineCollection: !!opts.isInline,
         },
         properties,
         views,

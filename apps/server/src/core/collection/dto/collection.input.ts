@@ -1,4 +1,11 @@
-import { IsIn, IsObject, IsOptional, IsString, IsUUID } from 'class-validator';
+import {
+  IsBoolean,
+  IsIn,
+  IsObject,
+  IsOptional,
+  IsString,
+  IsUUID,
+} from 'class-validator';
 
 export class CreateCollectionDto {
   @IsUUID()
@@ -6,6 +13,16 @@ export class CreateCollectionDto {
 
   @IsString()
   title: string;
+
+  // Host page for an INLINE collection (is_inline_collection=true); the new
+  // database page is created as its child instead of at the space root.
+  @IsOptional()
+  @IsUUID()
+  parentPageId?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  isInline?: boolean;
 }
 
 export class CollectionPageIdDto {

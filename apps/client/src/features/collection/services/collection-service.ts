@@ -49,6 +49,8 @@ export interface ICollectionRow {
 export async function createCollection(data: {
   spaceId: string;
   title: string;
+  parentPageId?: string;
+  isInline?: boolean;
 }) {
   const req = await api.post("/collections/create", data);
   return req.data;
