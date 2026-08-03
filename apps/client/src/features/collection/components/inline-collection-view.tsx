@@ -10,13 +10,23 @@ const INLINE_TABLE_HEIGHT = 480;
 
 export function InlineCollectionView({ node, editor }: NodeViewProps) {
   const pageId = node.attrs.pageId as string | null;
+  const pendingKey = node.attrs.pendingKey as string | null;
+  // Suppress the query while insertInlineCollection awaits the
+  // server-assigned pageId; useCollectionInfoQuery would otherwise fire
+  // with an empty key.
   const { data: info, isLoading, isError } = useCollectionInfoQuery(
-    pageId ?? "",
+    pendingKey ? "" : pageId ?? "",
   );
   const viewId = info?.views?.[0]?.id;
 
   let content: React.ReactNode;
-  if (!pageId) {
+  if (pendingKey) {
+    content = (
+      <Box p="md">
+        <Text c="dimmed">Creating database...</Text>
+      </Box>
+    );
+  } else if (!pageId) {
     content = (
       <Box p="md">
         <Text c="red">Invalid database (missing page id)</Text>

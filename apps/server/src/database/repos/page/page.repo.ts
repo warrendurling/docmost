@@ -316,7 +316,8 @@ export class PageRepo {
       .select(this.baseFields)
       .select((eb) => this.withSpace(eb))
       .where('spaceId', '=', spaceId)
-      .where('deletedAt', 'is', null);
+      .where('deletedAt', 'is', null)
+      .where('isInlineCollection', '=', false);
 
     return executeWithCursorPagination(query, {
       perPage: pagination.limit,
@@ -339,7 +340,8 @@ export class PageRepo {
       .select(this.baseFields)
       .select((eb) => this.withSpace(eb))
       .where('spaceId', 'in', this.spaceMemberRepo.getUserSpaceIdsQuery(userId))
-      .where('deletedAt', 'is', null);
+      .where('deletedAt', 'is', null)
+      .where('isInlineCollection', '=', false);
 
     return executeWithCursorPagination(query, {
       perPage: pagination.limit,

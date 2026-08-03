@@ -34,6 +34,7 @@ export function htmlToMarkdown(html: string): string {
     iframeEmbed,
     image,
     video,
+    inlineCollection,
   ]);
   return turndownService.turndown(html).replaceAll('<br>', ' ');
 }
@@ -199,6 +200,21 @@ function image(turndownService: _TurndownService) {
       const title = node.getAttribute('title') || '';
       const titlePart = title ? ' "' + title.replace(/"/g, '\\"') + '"' : '';
       return '![' + alt + '](' + src + titlePart + ')';
+    },
+  });
+}
+
+function inlineCollection(turndownService: _TurndownService) {
+  turndownService.addRule('inlineCollection', {
+    filter: function (node: HTMLInputElement) {
+      return (
+        node.nodeName === 'DIV' &&
+        node.getAttribute('data-type') === 'inline-collection'
+      );
+    },
+    replacement: function (_content: string, node: HTMLInputElement) {
+      const pageId = node.getAttribute('data-page-id') || '';
+      return `\n<!-- inline-collection: ${pageId} -->\n`;
     },
   });
 }
