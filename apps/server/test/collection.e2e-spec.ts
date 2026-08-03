@@ -22,6 +22,8 @@ import { LoggerModule } from '../src/common/logger/logger.module';
 import { NoopAuditModule } from '../src/integrations/audit/audit.module';
 import { ThrottleModule } from '../src/integrations/throttle/throttle.module';
 import { CollectionService } from '../src/core/collection/collection.service';
+import { PageService } from '../src/core/page/services/page.service';
+import { generateJitteredKeyBetween } from 'fractional-indexing-jittered';
 import { CollectionPropertyRepo } from '@docmost/db/repos/collection/collection-property.repo';
 import { CollectionViewRepo } from '@docmost/db/repos/collection/collection-view.repo';
 import { CollectionRowRepo } from '@docmost/db/repos/collection/collection-row.repo';
@@ -74,6 +76,7 @@ describe('CollectionService (e2e)', () => {
   let collectionPropertyRepo: CollectionPropertyRepo;
   let collectionViewRepo: CollectionViewRepo;
   let collectionRowRepo: CollectionRowRepo;
+  let pageService: PageService;
   let pageRepo: PageRepo;
   let shareRepo: ShareRepo;
   let pagePermissionRepo: PagePermissionRepo;
@@ -95,6 +98,7 @@ describe('CollectionService (e2e)', () => {
     collectionPropertyRepo = moduleFixture.get(CollectionPropertyRepo);
     collectionViewRepo = moduleFixture.get(CollectionViewRepo);
     collectionRowRepo = moduleFixture.get(CollectionRowRepo);
+    pageService = moduleFixture.get(PageService);
     pageRepo = moduleFixture.get(PageRepo);
     shareRepo = moduleFixture.get(ShareRepo);
     pagePermissionRepo = moduleFixture.get(PagePermissionRepo);
@@ -1903,6 +1907,306 @@ describe('CollectionService (e2e)', () => {
     });
   });
 
+  describe('page move guards [R6/R15]', () => {
+    it('movePage() rejects moving a collection row', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Move Guard DB',
+      });
+      const row = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+      const rowPage = await pageRepo.findById(row.pageId);
+
+      await expect(
+        pageService.movePage(
+          { pageId: rowPage.id, position: rowPage.position, parentPageId: null } as any,
+          rowPage,
+        ),
+      ).rejects.toThrow('Collection rows cannot be moved');
+    });
+
+    it('movePageToSpace() rejects moving a collection row to another space', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Move Guard DB Row Space',
+      });
+      const row = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+      const rowPage = await pageRepo.findById(row.pageId);
+
+      const otherSpace = await db
+        .insertInto('spaces')
+        .values({
+          name: 'Move Guard Other Space',
+          slug: `move-guard-other-space-${randomUUID()}`,
+          workspaceId,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+
+      await expect(
+        pageService.movePageToSpace(rowPage, otherSpace.id, user.id),
+      ).rejects.toThrow(
+        'Collections and their rows cannot be moved to another space',
+      );
+    });
+
+    it('movePageToSpace() rejects moving a database to another space', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Move Guard DB Space',
+      });
+      const dbPage = await pageRepo.findById(created.database.id);
+
+      const otherSpace = await db
+        .insertInto('spaces')
+        .values({
+          name: 'Move Guard Other Space 2',
+          slug: `move-guard-other-space-2-${randomUUID()}`,
+          workspaceId,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+
+      await expect(
+        pageService.movePageToSpace(dbPage, otherSpace.id, user.id),
+      ).rejects.toThrow(
+        'Collections and their rows cannot be moved to another space',
+      );
+    });
+
+    it('movePage() allows moving a database within its own space [control]', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Move Guard DB Reparent',
+      });
+      const dbPage = await pageRepo.findById(created.database.id);
+
+      const newParent = await pageRepo.insertPage({
+        slugId: randomUUID(),
+        title: 'Move Guard New Parent',
+        position: generateJitteredKeyBetween(null, null),
+        spaceId,
+        creatorId: user.id,
+        workspaceId,
+        lastUpdatedById: user.id,
+      } as any);
+
+      await pageService.movePage(
+        {
+          pageId: dbPage.id,
+          position: dbPage.position,
+          parentPageId: newParent.id,
+        } as any,
+        dbPage,
+      );
+
+      const moved = await pageRepo.findById(dbPage.id);
+      expect(moved.parentPageId).toBe(newParent.id);
+    });
+
+    it('movePage() and movePageToSpace() still allow moving a normal page [control, no regression]', async () => {
+      const normalPage = await pageRepo.insertPage({
+        slugId: randomUUID(),
+        title: 'Move Guard Normal Page',
+        position: generateJitteredKeyBetween(null, null),
+        spaceId,
+        creatorId: user.id,
+        workspaceId,
+        lastUpdatedById: user.id,
+      } as any);
+
+      const newParent = await pageRepo.insertPage({
+        slugId: randomUUID(),
+        title: 'Move Guard Normal Page Parent',
+        position: generateJitteredKeyBetween(null, null),
+        spaceId,
+        creatorId: user.id,
+        workspaceId,
+        lastUpdatedById: user.id,
+      } as any);
+
+      await pageService.movePage(
+        {
+          pageId: normalPage.id,
+          position: normalPage.position,
+          parentPageId: newParent.id,
+        } as any,
+        normalPage,
+      );
+
+      const reparented = await pageRepo.findById(normalPage.id);
+      expect(reparented.parentPageId).toBe(newParent.id);
+
+      const otherSpace = await db
+        .insertInto('spaces')
+        .values({
+          name: 'Move Guard Other Space 3',
+          slug: `move-guard-other-space-3-${randomUUID()}`,
+          workspaceId,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+
+      const { childPageIds } = await pageService.movePageToSpace(
+        reparented,
+        otherSpace.id,
+        user.id,
+      );
+      expect(childPageIds).toEqual([]);
+
+      const movedToSpace = await pageRepo.findById(normalPage.id);
+      expect(movedToSpace.spaceId).toBe(otherSpace.id);
+    });
+
+    it('movePageToSpace() rejects moving a normal page with a collection database nested under it', async () => {
+      const parent = await pageRepo.insertPage({
+        slugId: randomUUID(),
+        title: 'Move Guard Nested Parent',
+        position: generateJitteredKeyBetween(null, null),
+        spaceId,
+        creatorId: user.id,
+        workspaceId,
+        lastUpdatedById: user.id,
+      } as any);
+
+      const child = await pageRepo.insertPage({
+        slugId: randomUUID(),
+        title: 'Move Guard Nested DB',
+        position: generateJitteredKeyBetween(null, null),
+        parentPageId: parent.id,
+        spaceId,
+        creatorId: user.id,
+        workspaceId,
+        lastUpdatedById: user.id,
+      } as any);
+      await collectionService.convert({ user: user as any, pageId: child.id });
+
+      const parentPage = await pageRepo.findById(parent.id);
+
+      const otherSpace = await db
+        .insertInto('spaces')
+        .values({
+          name: 'Move Guard Other Space Nested',
+          slug: `move-guard-other-space-nested-${randomUUID()}`,
+          workspaceId,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+
+      await expect(
+        pageService.movePageToSpace(parentPage, otherSpace.id, user.id),
+      ).rejects.toThrow('Collections cannot be moved to another space');
+    });
+  });
+
+  describe('restore guards [R5/R16/R17]', () => {
+    it('restorePage() rejects restoring a collection row directly while its database is still trashed', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Restore Guard DB',
+      });
+      const row = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+
+      // trash the database page; removePage cascades to descendants,
+      // including the row page
+      await pageService.removePage(created.database.id, user.id, workspaceId);
+
+      const rowPage = await pageRepo.findById(row.pageId);
+      expect(rowPage.deletedAt).not.toBeNull();
+
+      await expect(
+        pageService.restorePage(rowPage, workspaceId),
+      ).rejects.toThrow('Restore the database to restore its rows');
+    });
+
+    it('restorePage() rejects restoring a row page that was individually deleted via deleteRow, even though its database is still live', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Restore Guard DB Individual Row Delete',
+      });
+      const row = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+
+      await collectionService.deleteRow({ user: user as any, rowId: row.id });
+
+      const rowPage = await pageRepo.findById(row.pageId);
+      expect(rowPage.deletedAt).not.toBeNull();
+
+      const dbPage = await pageRepo.findById(created.database.id);
+      expect(dbPage.deletedAt).toBeNull();
+
+      await expect(
+        pageService.restorePage(rowPage, workspaceId),
+      ).rejects.toThrow('Restore the database to restore its rows');
+    });
+
+    it('restorePage() allows restoring a normal trashed page [control, no regression]', async () => {
+      const normalPage = await pageRepo.insertPage({
+        slugId: randomUUID(),
+        title: 'Restore Guard Normal Page',
+        position: generateJitteredKeyBetween(null, null),
+        spaceId,
+        creatorId: user.id,
+        workspaceId,
+        lastUpdatedById: user.id,
+      } as any);
+
+      await pageService.removePage(normalPage.id, user.id, workspaceId);
+      const trashedPage = await pageRepo.findById(normalPage.id);
+      expect(trashedPage.deletedAt).not.toBeNull();
+
+      await pageService.restorePage(trashedPage, workspaceId);
+
+      const restored = await pageRepo.findById(normalPage.id);
+      expect(restored.deletedAt).toBeNull();
+    });
+
+    it('restoring the database cascades to restore its row [control]', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Restore Guard DB Then Row',
+      });
+      const row = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+
+      await pageService.removePage(created.database.id, user.id, workspaceId);
+
+      const dbPage = await pageRepo.findById(created.database.id);
+      await pageService.restorePage(dbPage, workspaceId);
+
+      // restorePage cascades to descendants, so the row page comes back
+      // restored along with the database — no separate row restore needed
+      const restoredRow = await pageRepo.findById(row.pageId);
+      expect(restoredRow.deletedAt).toBeNull();
+    });
+  });
+
   describe('date filter timezone offset cap', () => {
     it('a +16:00 offset date filter value does not throw rows/list (offset capped, filter skipped); a valid +05:00 offset also does not throw', async () => {
       const created = await collectionService.create({
@@ -2111,6 +2415,212 @@ describe('CollectionService (e2e)', () => {
       );
       expect(all).toHaveLength(1);
       expect(all[0].id).toBe(firstView.id);
+    });
+  });
+
+  describe('duplicate guards', () => {
+    it('duplicatePage() rejects duplicating a collection database page', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Duplicate Guard DB',
+      });
+      const dbPage = await pageRepo.findById(created.database.id);
+
+      await expect(
+        pageService.duplicatePage(dbPage, undefined, user as any),
+      ).rejects.toThrow('Duplicating collections is not yet supported');
+    });
+
+    it('duplicatePage() rejects duplicating a collection row page', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Duplicate Guard DB Row',
+      });
+      const row = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+      const rowPage = await pageRepo.findById(row.pageId);
+
+      await expect(
+        pageService.duplicatePage(rowPage, undefined, user as any),
+      ).rejects.toThrow('Duplicating collections is not yet supported');
+    });
+
+    it('duplicatePage() rejects duplicating a normal page that has a collection database nested under it', async () => {
+      const parent = await pageRepo.insertPage({
+        slugId: randomUUID(),
+        title: 'Duplicate Guard Nested Parent',
+        position: generateJitteredKeyBetween(null, null),
+        spaceId,
+        creatorId: user.id,
+        workspaceId,
+        lastUpdatedById: user.id,
+      } as any);
+
+      const child = await pageRepo.insertPage({
+        slugId: randomUUID(),
+        title: 'Duplicate Guard Nested DB',
+        position: generateJitteredKeyBetween(null, null),
+        parentPageId: parent.id,
+        spaceId,
+        creatorId: user.id,
+        workspaceId,
+        lastUpdatedById: user.id,
+      } as any);
+      await collectionService.convert({ user: user as any, pageId: child.id });
+
+      const parentPage = await pageRepo.findById(parent.id);
+
+      await expect(
+        pageService.duplicatePage(parentPage, undefined, user as any),
+      ).rejects.toThrow('Duplicating collections is not yet supported');
+    });
+
+    it('duplicatePage() does not throw when a collection database sits in a branch the caller cannot access — it is silently skipped, not disclosed', async () => {
+      const parent = await pageRepo.insertPage({
+        slugId: randomUUID(),
+        title: 'Duplicate Guard Hidden Branch Parent',
+        position: generateJitteredKeyBetween(null, null),
+        spaceId,
+        creatorId: user.id,
+        workspaceId,
+        lastUpdatedById: user.id,
+      } as any);
+
+      const hiddenChild = await pageRepo.insertPage({
+        slugId: randomUUID(),
+        title: 'Duplicate Guard Hidden DB',
+        position: generateJitteredKeyBetween(null, null),
+        parentPageId: parent.id,
+        spaceId,
+        creatorId: user.id,
+        workspaceId,
+        lastUpdatedById: user.id,
+      } as any);
+      await collectionService.convert({
+        user: user as any,
+        pageId: hiddenChild.id,
+      });
+      // restrict with no permission grant for anyone, including `user` —
+      // the acting user can no longer see this branch at all.
+      await restrictPage(hiddenChild.id);
+
+      const parentPage = await pageRepo.findById(parent.id);
+
+      const duplicated = await pageService.duplicatePage(
+        parentPage,
+        undefined,
+        user as any,
+      );
+
+      expect(duplicated.id).not.toBe(parentPage.id);
+      expect(duplicated.title).toBe(
+        'Copy of Duplicate Guard Hidden Branch Parent',
+      );
+    });
+
+    it('duplicatePage() still allows duplicating a plain page with no collection in its subtree [control]', async () => {
+      const normalPage = await pageRepo.insertPage({
+        slugId: randomUUID(),
+        title: 'Duplicate Guard Normal Page',
+        position: generateJitteredKeyBetween(null, null),
+        spaceId,
+        creatorId: user.id,
+        workspaceId,
+        lastUpdatedById: user.id,
+      } as any);
+
+      const duplicated = await pageService.duplicatePage(
+        normalPage,
+        undefined,
+        user as any,
+      );
+
+      expect(duplicated.id).not.toBe(normalPage.id);
+      expect(duplicated.title).toBe('Copy of Duplicate Guard Normal Page');
+    });
+  });
+
+  describe('page tree surface exclusion [collection lifecycle guards]', () => {
+    it('getSidebarPages() lists the database page but not its row page; a normal page with a normal child still shows hasChildren + the child', async () => {
+      const created = await collectionService.create({
+        user: user as any,
+        workspaceId,
+        spaceId,
+        title: 'Sidebar Exclusion DB',
+      });
+      const row = await collectionService.createRow({
+        user: user as any,
+        collectionPageId: created.database.id,
+      });
+
+      const normalParent = await pageRepo.insertPage({
+        slugId: randomUUID(),
+        title: 'Sidebar Normal Parent',
+        position: generateJitteredKeyBetween(null, null),
+        spaceId,
+        creatorId: user.id,
+        workspaceId,
+        lastUpdatedById: user.id,
+      } as any);
+      const normalChild = await pageRepo.insertPage({
+        slugId: randomUUID(),
+        title: 'Sidebar Normal Child',
+        position: generateJitteredKeyBetween(null, null),
+        parentPageId: normalParent.id,
+        spaceId,
+        creatorId: user.id,
+        workspaceId,
+        lastUpdatedById: user.id,
+      } as any);
+
+      // root-level listing: database page present, row page never at root
+      // anyway (it's parented under the database) but the exclusion must
+      // still keep the database itself visible.
+      const rootResult = await pageService.getSidebarPages(spaceId, {
+        limit: 100,
+      } as any);
+      const rootIds = rootResult.items.map((p: any) => p.id);
+      expect(rootIds).toContain(created.database.id);
+      expect(rootIds).toContain(normalParent.id);
+
+      const dbItem: any = rootResult.items.find(
+        (p: any) => p.id === created.database.id,
+      );
+      // database has only a row child -> hasChildren must be false (no
+      // empty expand chevron in the sidebar).
+      expect(dbItem.hasChildren).toBe(false);
+
+      const normalParentItem: any = rootResult.items.find(
+        (p: any) => p.id === normalParent.id,
+      );
+      expect(normalParentItem.hasChildren).toBe(true);
+
+      // child-level listing under the database: the row page must NOT appear
+      const dbChildrenResult = await pageService.getSidebarPages(
+        spaceId,
+        { limit: 100 } as any,
+        created.database.id,
+      );
+      expect(dbChildrenResult.items.map((p: any) => p.id)).not.toContain(
+        row.pageId,
+      );
+
+      // control: child-level listing under the normal parent still lists
+      // its normal child
+      const normalChildrenResult = await pageService.getSidebarPages(
+        spaceId,
+        { limit: 100 } as any,
+        normalParent.id,
+      );
+      expect(normalChildrenResult.items.map((p: any) => p.id)).toContain(
+        normalChild.id,
+      );
     });
   });
 });

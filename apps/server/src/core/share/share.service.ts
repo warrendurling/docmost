@@ -162,6 +162,7 @@ export class ShareService {
           ])
           .where(isValidUUID(pageId) ? 'pages.id' : 'pages.slugId', '=', pageId)
           .where('pages.deletedAt', 'is', null)
+          // ponytail: collection-row exclusion deferred to sharing-security phase (was buggy in recursive CTE — truncated share-anchor walk, also inconsistent w/ share tree still listing rows)
           .unionAll(
             (union) =>
               union

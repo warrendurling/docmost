@@ -309,7 +309,9 @@ export class PageService {
       ])
       .select((eb) => this.pageRepo.withHasChildren(eb))
       .where('deletedAt', 'is', null)
-      .where('spaceId', '=', spaceId);
+      .where('spaceId', '=', spaceId)
+      .where('isCollectionRow', '=', false)
+      .where('isInlineCollection', '=', false);
 
     if (pageId) {
       query = query.where('parentPageId', '=', pageId);
@@ -391,11 +393,31 @@ export class PageService {
   }
 
   async movePageToSpace(rootPage: Page, spaceId: string, userId: string) {
+    if (rootPage.isCollectionRow || rootPage.isCollection) {
+      throw new BadRequestException(
+        'Collections and their rows cannot be moved to another space',
+      );
+    }
+
     let childPageIds: string[] = [];
 
     const allPages = await this.pageRepo.getPageAndDescendants(rootPage.id, {
       includeContent: false,
     });
+
+    // A normal page containing a database (or one of its rows/inline
+    // collections) as a descendant must not be moved either — that would
+    // split the collection across spaces just as moving the root would.
+    if (
+      allPages.some(
+        (page) =>
+          page.isCollection || page.isCollectionRow || page.isInlineCollection,
+      )
+    ) {
+      throw new BadRequestException(
+        'Collections cannot be moved to another space',
+      );
+    }
 
     // Filter to only accessible pages while maintaining tree integrity
     const accessiblePages = await this.filterAccessibleTreePages(
@@ -536,6 +558,20 @@ export class PageService {
       authUser.id,
       rootPage.spaceId,
     );
+
+    // Check for collections only on the accessible set — checking before
+    // filtering would abort the duplicate (and disclose the collection's
+    // existence) even when it sits in a branch the user can't see.
+    if (
+      pages.some(
+        (page) =>
+          page.isCollection || page.isCollectionRow || page.isInlineCollection,
+      )
+    ) {
+      throw new BadRequestException(
+        'Duplicating collections is not yet supported',
+      );
+    }
 
     const pageMap = new Map<string, CopyPageMapEntry>();
     pages.forEach((page) => {
@@ -803,6 +839,10 @@ export class PageService {
   }
 
   async movePage(dto: MovePageDto, movedPage: Page) {
+    if (movedPage.isCollectionRow) {
+      throw new BadRequestException('Collection rows cannot be moved');
+    }
+
     // validate position value by attempting to generate a key
     try {
       generateJitteredKeyBetween(dto.position, null);
@@ -855,6 +895,7 @@ export class PageService {
           ])
           .where('id', '=', childPageId)
           .where('deletedAt', 'is', null)
+          // ponytail: collection-row exclusion deferred to sharing-security phase (was buggy in recursive CTE — truncated ancestor walk)
           .unionAll((exp) =>
             exp
               .selectFrom('pages as p')
@@ -1042,6 +1083,22 @@ export class PageService {
     workspaceId: string,
   ): Promise<void> {
     await this.pageRepo.removePage(pageId, userId, workspaceId);
+  }
+
+  async restorePage(page: Page, workspaceId: string): Promise<void> {
+    // [R5/R16/R17] a collection row's restore must always be driven from
+    // its database (cascade restore) — never individually. Rows can be
+    // trashed independently of their database (collectionService.deleteRow
+    // soft-deletes the collection_rows record while the database stays
+    // live), so restoring the row page directly would leave a live page
+    // that's still excluded from the database — a permanent ghost.
+    if (page.isCollectionRow) {
+      throw new BadRequestException(
+        'Restore the database to restore its rows',
+      );
+    }
+
+    await this.pageRepo.restorePage(page.id, workspaceId);
   }
 
   private async parseProsemirrorContent(

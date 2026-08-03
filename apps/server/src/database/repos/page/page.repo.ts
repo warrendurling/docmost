@@ -485,6 +485,8 @@ export class PageRepo {
       )
       .whereRef('child.parentPageId', '=', 'pages.id')
       .where('child.deletedAt', 'is', null)
+      .where('child.isCollectionRow', '=', false)
+      .where('child.isInlineCollection', '=', false)
       .limit(1)
       .as('hasChildren');
   }
@@ -508,6 +510,9 @@ export class PageRepo {
             'workspaceId',
             'createdAt',
             'updatedAt',
+            'isCollection',
+            'isCollectionRow',
+            'isInlineCollection',
           ])
           .$if(opts?.includeContent, (qb) => qb.select('content'))
           .where('id', '=', parentPageId)
@@ -526,6 +531,9 @@ export class PageRepo {
                 'p.workspaceId',
                 'p.createdAt',
                 'p.updatedAt',
+                'p.isCollection',
+                'p.isCollectionRow',
+                'p.isInlineCollection',
               ])
               .$if(opts?.includeContent, (qb) => qb.select('p.content'))
               .innerJoin('page_hierarchy as ph', 'p.parentPageId', 'ph.id')

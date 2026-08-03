@@ -391,7 +391,7 @@ export class PageController {
     // make sure they have page level access to the page
     await this.pageAccessService.validateCanEdit(page, user);
 
-    await this.pageRepo.restorePage(pageIdDto.pageId, workspace.id);
+    await this.pageService.restorePage(page, workspace.id);
 
     this.auditService.log({
       event: AuditEvent.PAGE_RESTORED,
