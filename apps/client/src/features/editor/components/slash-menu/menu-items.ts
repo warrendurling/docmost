@@ -30,6 +30,7 @@ import {
   IconTag,
   IconMoodSmile,
   IconRotate2,
+  IconDatabase,
 } from "@tabler/icons-react";
 import {
   CommandProps,
@@ -59,6 +60,7 @@ import {
   YoutubeIcon,
 } from "@/components/icons";
 import { insertBaseEmbedBlock } from "@/features/editor/components/base-embed/insert-base-embed";
+import { insertInlineCollection } from "@/features/collection/components/insert-inline-collection";
 
 const CommandGroups: SlashMenuGroupedItemsType = {
   basic: [
@@ -369,6 +371,15 @@ const CommandGroups: SlashMenuGroupedItemsType = {
       requiresBases: true,
       command: ({ editor, range }: CommandProps) => {
         insertBaseEmbedBlock(editor, { range });
+      },
+    },
+    {
+      title: "Database",
+      description: "Insert an inline database on this page",
+      searchTerms: ["database", "collection", "table", "grid"],
+      icon: IconDatabase,
+      command: ({ editor, range }: CommandProps) => {
+        insertInlineCollection(editor, { range });
       },
     },
     {

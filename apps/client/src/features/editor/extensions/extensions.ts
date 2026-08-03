@@ -62,6 +62,7 @@ import {
   TransclusionReference,
   TableView,
   BaseEmbed as BaseEmbedNode,
+  InlineCollection as InlineCollectionNode,
 } from "@docmost/editor-ext";
 import {
   randomElement,
@@ -93,6 +94,7 @@ import SubpagesView from "@/features/editor/components/subpages/subpages-view.ts
 import TransclusionView from "@/features/editor/components/transclusion/transclusion-view.tsx";
 import TransclusionReferenceView from "@/features/editor/components/transclusion/transclusion-reference-view.tsx";
 import { BaseEmbedView } from "@/features/editor/components/base-embed/base-embed-view.tsx";
+import { InlineCollectionView } from "@/features/collection/components/inline-collection-view.tsx";
 import { common, createLowlight } from "lowlight";
 import plaintext from "highlight.js/lib/languages/plaintext";
 import powershell from "highlight.js/lib/languages/powershell";
@@ -387,6 +389,11 @@ export const mainExtensions = [
   BaseEmbedNode.extend({
     addNodeView() {
       return ReactNodeViewRenderer(BaseEmbedView);
+    },
+  }),
+  InlineCollectionNode.extend({
+    addNodeView() {
+      return ReactNodeViewRenderer(InlineCollectionView);
     },
   }),
   MarkdownClipboard.configure({
